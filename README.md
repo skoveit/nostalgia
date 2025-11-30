@@ -15,7 +15,7 @@ PHOENIX throws that model away:
 | Detectable by traffic pattern? | Easy           | Extremely hard (only 5 neighbors)    |
 | Command authenticity           | Server cert    | Ed25519-signed by secret key         |
 
-### Core Features (already working or 99% done)
+### Core Features
 
 - Fully decentralized P2P graph (go-libp2p + Kademlia DHT)
 - Max 5 neighbors per agent → tiny traffic footprint
@@ -51,7 +51,3 @@ PHOENIX throws that model away:
 Built with love, Go, and zero trust.
 
 Pull requests welcome. Let’s make it unbreakable.
-
-
-Pwn the world.
-![alt text](data/image2.png)
