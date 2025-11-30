@@ -1,9 +1,11 @@
 
-# PHOENIX – The Undetectable Self-Healing P2P C2
 
-**No server. No domain. No single point of failure. You can't kill what has no head.**
 
+**Traditional Command & Control (C2)** works exactly like a classic army: one central server (or domain) sits at the top, and every compromised machine (agent) phones home to it on a regular schedule to receive orders. This design is simple and fast, but it has a fatal weakness – it’s a single point of failure. As soon as defenders discover and block that one IP, domain, or server, the entire operation collapses instantly. Thousands of agents become blind and useless the moment their command center disappears.
+
+PHOENIX throws that model away:
 ![alt text](data/image.png)
+**No server. No domain. No single point of failure. You can't kill what has no head.**
 
 ## Why PHOENIX is a Game Changer
 
@@ -47,37 +49,8 @@
 - [ ] Dockerized simulation environment (10k bots in minutes)
 - [ ] YARA rules & detection research paper (blue team side)
 
-## Quick Start (5 seconds)
-
-```bash
-# Download latest release (Windows/Linux/macOS/ARM)
-wget https://github.com/yourname/phoenix/releases/latest/download/phoenix.exe
-
-# First agent (becomes bootstrap node)
-./phoenix.exe --listen /ip4/0.0.0.0/tcp/9000
-
-# Other agents (auto-discover)
-./phoenix.exe --bootstrap /ip4/YOUR_IP/tcp/9000
-
-# Become Operator (any agent, any time)
-./phoenix.exe --operator-key secret.key
-> whoami
-Operator mode activated. Network is yours.
-> list
-867 agents online
-> run calc.exe
-Done. 867/867
-```
-
-## License & Ethics
-
-Academic / Red Team / Defensive research only.  
-Do not use against systems you don’t own or have explicit permission to test.
-
-If you’re a student doing this as final year project… this is the one that makes the committee go “holy sh*t”.
-
-Star if you want resilient C2 that refuses to die.  
-Pull requests welcome. Let’s make it unbreakable.
 
 **PHOENIX – Rise from any ash.**  
 Built with love, Go, and zero trust.
+
+Pull requests welcome. Let’s make it unbreakable.
