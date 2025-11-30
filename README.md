@@ -1,7 +1,4 @@
 
-![alt text](image.png)
-
-
 **Traditional Command & Control (C2)** works exactly like a classic army: one central server (or domain) sits at the top, and every compromised machine (agent) phones home to it on a regular schedule to receive orders. This design is simple and fast, but it has a fatal weakness – it’s a single point of failure. As soon as defenders discover and block that one IP, domain, or server, the entire operation collapses instantly. Thousands of agents become blind and useless the moment their command center disappears.
 PHOENIX throws that model away:
 ![alt text](data/image.png)
@@ -54,3 +51,7 @@ PHOENIX throws that model away:
 Built with love, Go, and zero trust.
 
 Pull requests welcome. Let’s make it unbreakable.
+
+
+Pwn the world.
+![alt text](data/image2.png)
