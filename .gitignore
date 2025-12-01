@@ -8,6 +8,7 @@
 .idea
 .vscode
 .claude/settings.local.json
+test* 
 
 # Binaries
 /bin/*
