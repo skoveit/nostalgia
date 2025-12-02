@@ -93,6 +93,28 @@ func (p *Protocol) SendCommand(targetID, command string) {
 	p.routeMessage(msg)
 }
 
+func (p *Protocol) SendResponse(targetID, response string) {
+	msg := NewResponseMessage(p.node.ID().String(), targetID, response)
+
+	// Try direct connection first
+	target, err := peer.Decode(targetID)
+	if err != nil {
+		log.Printf("Invalid peer ID: %v", err)
+		return
+	}
+
+	if p.node.PeerManager().Has(target) {
+		if err := p.sendMessage(target, msg); err == nil {
+			log.Printf("📤 Response sent directly to %s", targetID[:16])
+			return
+		}
+	}
+
+	// Route through mesh
+	log.Printf("🔀 Routing response to %s", targetID[:16])
+	p.routeMessage(msg)
+}
+
 func (p *Protocol) routeMessage(msg *Message) {
 	peers := p.node.PeerManager().List()
 	for _, peerID := range peers {

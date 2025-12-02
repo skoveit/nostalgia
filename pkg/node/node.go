@@ -96,6 +96,6 @@ func (n *Node) ListPeers() {
 	}
 	log.Printf("Connected peers (%d/%d):", len(peers), MaxPeers)
 	for _, p := range peers {
-		log.Printf("  - %s", p.String()[:16])
+		log.Printf("  - %s", p.String())
 	}
 }

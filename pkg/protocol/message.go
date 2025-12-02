@@ -39,6 +39,19 @@ func NewCommandMessage(source, target, payload string) *Message {
 	}
 }
 
+func NewResponseMessage(source, target, payload string) *Message {
+	return &Message{
+		Type:      MsgTypeResponse,
+		ID:        generateID(),
+		Source:    source,
+		Target:    target,
+		Payload:   payload,
+		Timestamp: time.Now().Unix(),
+		TTL:       10,
+		Visited:   []string{source},
+	}
+}
+
 func (m *Message) AddVisited(nodeID peer.ID) {
 	m.Visited = append(m.Visited, nodeID.String())
 	m.TTL--

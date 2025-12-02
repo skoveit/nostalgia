@@ -27,6 +27,7 @@ func main() {
 	// Setup protocol handler
 	cmdHandler := command.NewHandler(n)
 	proto := protocol.NewProtocol(n, cmdHandler)
+	cmdHandler.SetProtocol(proto)
 	n.SetProtocol(proto)
 
 	// Start mDNS discovery
