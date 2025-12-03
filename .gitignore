@@ -9,6 +9,7 @@
 .vscode
 .claude/settings.local.json
 test* 
+main
 
 # Binaries
 /bin/*
