@@ -15,6 +15,11 @@ const (
 	MsgTypeRoute    MessageType = "route"
 )
 
+// String returns the human-readable string representation of the message type
+func (mt MessageType) String() string {
+	return string(mt)
+}
+
 type Message struct {
 	Type      MessageType `json:"type"`
 	ID        string      `json:"id"`
@@ -26,22 +31,9 @@ type Message struct {
 	Visited   []string    `json:"visited"`
 }
 
-func NewCommandMessage(source, target, payload string) *Message {
+func NewMessage(msgType MessageType, source, target, payload string) *Message {
 	return &Message{
-		Type:      MsgTypeCommand,
-		ID:        generateID(),
-		Source:    source,
-		Target:    target,
-		Payload:   payload,
-		Timestamp: time.Now().Unix(),
-		TTL:       10,
-		Visited:   []string{source},
-	}
-}
-
-func NewResponseMessage(source, target, payload string) *Message {
-	return &Message{
-		Type:      MsgTypeResponse,
+		Type:      msgType,
 		ID:        generateID(),
 		Source:    source,
 		Target:    target,

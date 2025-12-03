@@ -38,7 +38,6 @@ func (h *Handler) Handle(msg *protocol.Message) error {
 		return err
 	}
 
-	log.Printf("✓ Output: %s", output)
 	if h.protocol != nil {
 		h.protocol.SendResponse(msg.Source, output)
 	}

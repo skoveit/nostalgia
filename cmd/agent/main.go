@@ -36,7 +36,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Node started: %s", n.ID().String()[:16])
+	log.Printf("Node started: %s", n.ID().String())
 	log.Printf("Listening on: %s", n.Addrs())
 	log.Println("\nCommands:")
 	log.Println("  send <nodeID> <command>  - Send command to specific node")

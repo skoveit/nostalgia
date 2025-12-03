@@ -71,8 +71,8 @@ func (p *Protocol) HandleStream(s network.Stream) {
 	}
 }
 
-func (p *Protocol) SendCommand(targetID, command string) {
-	msg := NewCommandMessage(p.node.ID().String(), targetID, command)
+func (p *Protocol) Send(msgType MessageType, targetID, payload string) {
+	msg := NewMessage(msgType, p.node.ID().String(), targetID, payload)
 
 	// Try direct connection first
 	target, err := peer.Decode(targetID)
@@ -83,36 +83,24 @@ func (p *Protocol) SendCommand(targetID, command string) {
 
 	if p.node.PeerManager().Has(target) {
 		if err := p.sendMessage(target, msg); err == nil {
-			log.Printf("📤 Command sent directly to %s", targetID[:16])
+			log.Printf("📤 %s sent directly to %s", msgType.String(), targetID[:16])
 			return
 		}
 	}
 
 	// Route through mesh
-	log.Printf("🔀 Routing command to %s", targetID[:16])
+	log.Printf("🔀 Routing %s to %s", msgType.String(), targetID[:16])
 	p.routeMessage(msg)
 }
 
+// SendCommand is a convenience wrapper for sending commands
+func (p *Protocol) SendCommand(targetID, command string) {
+	p.Send(MsgTypeCommand, targetID, command)
+}
+
+// SendResponse is a convenience wrapper for sending responses
 func (p *Protocol) SendResponse(targetID, response string) {
-	msg := NewResponseMessage(p.node.ID().String(), targetID, response)
-
-	// Try direct connection first
-	target, err := peer.Decode(targetID)
-	if err != nil {
-		log.Printf("Invalid peer ID: %v", err)
-		return
-	}
-
-	if p.node.PeerManager().Has(target) {
-		if err := p.sendMessage(target, msg); err == nil {
-			log.Printf("📤 Response sent directly to %s", targetID[:16])
-			return
-		}
-	}
-
-	// Route through mesh
-	log.Printf("🔀 Routing response to %s", targetID[:16])
-	p.routeMessage(msg)
+	p.Send(MsgTypeResponse, targetID, response)
 }
 
 func (p *Protocol) routeMessage(msg *Message) {

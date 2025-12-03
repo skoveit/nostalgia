@@ -34,7 +34,7 @@ func (pm *PeerManager) Add(p peer.ID) bool {
 	}
 
 	pm.peers[p] = time.Now()
-	log.Printf("→ Peer connected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String()[:16])
+	log.Printf("→ Peer connected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String())
 	return true
 }
 
@@ -44,7 +44,7 @@ func (pm *PeerManager) Remove(p peer.ID) {
 
 	if _, exists := pm.peers[p]; exists {
 		delete(pm.peers, p)
-		log.Printf("← Peer disconnected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String()[:16])
+		log.Printf("← Peer disconnected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String())
 	}
 }
 
