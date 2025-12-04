@@ -1,27 +1,37 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"fmt"
-	"log"
+	"flag"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
 
 	"nostaliga/pkg/command"
 	"nostaliga/pkg/discovery"
+	"nostaliga/pkg/ipc"
+	"nostaliga/pkg/logger"
 	"nostaliga/pkg/node"
 	"nostaliga/pkg/protocol"
 )
 
+var (
+	debug = flag.Bool("debug", false, "Enable debug logging")
+)
+
 func main() {
+	flag.Parse()
+
+	// Set debug mode
+	logger.SetDebug(*debug)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	// Initialize node
 	n, err := node.NewNode(ctx)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatalf("Failed to create node: %v", err)
 	}
 
 	// Setup protocol handler
@@ -33,56 +43,86 @@ func main() {
 	// Start mDNS discovery
 	disc := discovery.NewMDNSDiscovery(n)
 	if err := disc.Start(); err != nil {
-		log.Fatal(err)
+		logger.Fatalf("Failed to start discovery: %v", err)
 	}
 
-	log.Printf("Node started: %s", n.ID().String())
-	log.Printf("Listening on: %s", n.Addrs())
-	log.Println("\nCommands:")
-	log.Println("  send <nodeID> <command>  - Send command to specific node")
-	log.Println("  peers                    - List connected peers")
-	log.Println("  id                       - Show node ID")
-	log.Println("  quit                     - Exit")
+	logger.Debug("Node started: %s", n.ID().String())
+	logger.Debug("Listening on: %s", n.Addrs())
 
-	// Command line interface
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("\n> ")
-		if !scanner.Scan() {
-			break
+	// Start IPC server for controller
+	ipcServer, err := ipc.NewServer(func(msg *ipc.Message) *ipc.Message {
+		return handleIPCMessage(msg, n, proto)
+	})
+	if err != nil {
+		logger.Fatalf("Failed to start IPC server: %v", err)
+	}
+	ipcServer.Start()
+
+	// Set response callback to forward responses to controller via IPC
+	cmdHandler.SetResponseCallback(func(source, payload string) {
+		logger.Debug("Response received from %s: %s", source[:16], payload)
+		// Forward to controller
+		if err := ipcServer.SendToController(source, payload); err != nil {
+			logger.Debug("Failed to send response to controller: %v", err)
+		}
+	})
+
+	// Wait for shutdown signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	logger.Debug("Shutting down...")
+	ipcServer.Stop()
+	disc.Stop()
+	cancel()
+}
+
+func handleIPCMessage(msg *ipc.Message, n *node.Node, proto *protocol.Protocol) *ipc.Message {
+	switch msg.Type {
+	case ipc.MsgConnect:
+		return &ipc.Message{
+			Type:    ipc.MsgResponse,
+			Payload: "connected",
 		}
 
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
+	case ipc.MsgID:
+		return &ipc.Message{
+			Type:    ipc.MsgResponse,
+			Payload: n.ID().String(),
 		}
 
-		parts := strings.SplitN(input, " ", 3)
-		cmd := parts[0]
+	case ipc.MsgPeers:
+		return &ipc.Message{
+			Type:    ipc.MsgResponse,
+			Payload: n.ListPeers(),
+		}
 
-		switch cmd {
-		case "send":
-			if len(parts) < 3 {
-				log.Println("Usage: send <nodeID> <command>")
-				continue
+	case ipc.MsgSend:
+		if len(msg.Args) < 2 {
+			return &ipc.Message{
+				Type:    ipc.MsgError,
+				Payload: "usage: send <nodeID> <command>",
 			}
-			targetID := parts[1]
-			command := parts[2]
-			proto.SendCommand(targetID, command)
+		}
+		targetID := msg.Args[0]
+		command := msg.Args[1]
+		proto.SendCommand(targetID, command)
+		return &ipc.Message{
+			Type:    ipc.MsgResponse,
+			Payload: "command sent",
+		}
 
-		case "peers":
-			n.ListPeers()
+	case ipc.MsgQuit:
+		return &ipc.Message{
+			Type:    ipc.MsgResponse,
+			Payload: "goodbye",
+		}
 
-		case "id":
-			log.Printf("Node ID: %s", n.ID().String())
-
-		case "quit", "exit":
-			log.Println("Shutting down...")
-			cancel()
-			return
-
-		default:
-			log.Printf("Unknown command: %s", cmd)
+	default:
+		return &ipc.Message{
+			Type:    ipc.MsgError,
+			Payload: "unknown command",
 		}
 	}
 }

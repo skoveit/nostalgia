@@ -3,9 +3,9 @@ package discovery
 import (
 	"context"
 	"crypto/rand"
-	"log"
 	"time"
 
+	"nostaliga/pkg/logger"
 	"nostaliga/pkg/node"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -30,7 +30,7 @@ func (d *MDNSDiscovery) Start() error {
 		return err
 	}
 	d.service = s
-	log.Println("mDNS discovery started")
+	logger.Debugln("mDNS discovery started")
 	return nil
 }
 

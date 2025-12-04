@@ -3,8 +3,11 @@ package node
 import (
 	"context"
 	"crypto/rand"
-	"log"
+	"fmt"
+	"strings"
 	"sync"
+
+	"nostaliga/pkg/logger"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -88,14 +91,21 @@ func (n *Node) PeerManager() *PeerManager {
 	return n.peerMgr
 }
 
-func (n *Node) ListPeers() {
+// ListPeers logs peer list (for debug) and returns formatted string
+func (n *Node) ListPeers() string {
 	peers := n.peerMgr.List()
 	if len(peers) == 0 {
-		log.Println("No connected peers")
-		return
+		logger.Debugln("No connected peers")
+		return "No connected peers"
 	}
-	log.Printf("Connected peers (%d/%d):", len(peers), MaxPeers)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Connected peers (%d/%d):\n", len(peers), MaxPeers))
 	for _, p := range peers {
-		log.Printf("  - %s", p.String())
+		sb.WriteString(fmt.Sprintf("  - %s\n", p.String()))
 	}
+
+	result := sb.String()
+	logger.Debug("%s", result)
+	return result
 }

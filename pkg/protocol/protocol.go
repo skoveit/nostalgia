@@ -4,9 +4,10 @@ import (
 	"bufio"
 	"context"
 	"io"
-	"log"
+	"sync"
 	"time"
 
+	"nostaliga/pkg/logger"
 	"nostaliga/pkg/node"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -19,9 +20,14 @@ type CommandHandler interface {
 	Handle(msg *Message) error
 }
 
+// ResponseCallback is called when a response is received
+type ResponseCallback func(source, payload string)
+
 type Protocol struct {
-	node    *node.Node
-	handler CommandHandler
+	node             *node.Node
+	handler          CommandHandler
+	responseCallback ResponseCallback
+	callbackMu       sync.RWMutex
 }
 
 func NewProtocol(n *node.Node, handler CommandHandler) *Protocol {
@@ -32,6 +38,13 @@ func NewProtocol(n *node.Node, handler CommandHandler) *Protocol {
 
 	n.Host().SetStreamHandler(ProtocolID, p.HandleStream)
 	return p
+}
+
+// SetResponseCallback sets a callback for when responses are received
+func (p *Protocol) SetResponseCallback(cb ResponseCallback) {
+	p.callbackMu.Lock()
+	defer p.callbackMu.Unlock()
+	p.responseCallback = cb
 }
 
 func (p *Protocol) HandleStream(s network.Stream) {
@@ -57,16 +70,16 @@ func (p *Protocol) HandleStream(s network.Stream) {
 
 	// Check if message is for this node
 	if msg.Target == p.node.ID().String() {
-		log.Printf("📩 Received command: %s", msg.Payload)
+		logger.Debug("📩 Received %s", msg.Type.String())
 		if err := p.handler.Handle(msg); err != nil {
-			log.Printf("Error handling command: %v", err)
+			logger.Debug("Error handling command: %v", err)
 		}
 		return
 	}
 
 	// Route message if TTL > 0
 	if msg.TTL > 0 {
-		log.Printf("🔀 Routing message to %s", msg.Target[:16])
+		logger.Debug("🔀 Routing message to %s", msg.Target)
 		p.routeMessage(msg)
 	}
 }
@@ -77,19 +90,19 @@ func (p *Protocol) Send(msgType MessageType, targetID, payload string) {
 	// Try direct connection first
 	target, err := peer.Decode(targetID)
 	if err != nil {
-		log.Printf("Invalid peer ID: %v", err)
+		logger.Debug("Invalid peer ID: %v", err)
 		return
 	}
 
 	if p.node.PeerManager().Has(target) {
 		if err := p.sendMessage(target, msg); err == nil {
-			log.Printf("📤 %s sent directly to %s", msgType.String(), targetID[:16])
+			logger.Debug("📤 %s sent directly to %s", msgType.String(), targetID)
 			return
 		}
 	}
 
 	// Route through mesh
-	log.Printf("🔀 Routing %s to %s", msgType.String(), targetID[:16])
+	logger.Debug("🔀 Routing %s to %s", msgType.String(), targetID)	
 	p.routeMessage(msg)
 }
 

@@ -1,7 +1,7 @@
 package node
 
 import (
-	"log"
+	"nostaliga/pkg/logger"
 	"sync"
 	"time"
 
@@ -34,7 +34,7 @@ func (pm *PeerManager) Add(p peer.ID) bool {
 	}
 
 	pm.peers[p] = time.Now()
-	log.Printf("→ Peer connected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String())
+	logger.Debug("→ Peer connected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String())
 	return true
 }
 
@@ -44,7 +44,7 @@ func (pm *PeerManager) Remove(p peer.ID) {
 
 	if _, exists := pm.peers[p]; exists {
 		delete(pm.peers, p)
-		log.Printf("← Peer disconnected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String())
+		logger.Debug("← Peer disconnected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String())
 	}
 }
 
