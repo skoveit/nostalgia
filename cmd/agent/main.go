@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"nostaliga/pkg/command"
@@ -21,8 +23,6 @@ var (
 
 func main() {
 	flag.Parse()
-
-	// Set debug mode
 	logger.SetDebug(*debug)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -34,95 +34,62 @@ func main() {
 		logger.Fatalf("Failed to create node: %v", err)
 	}
 
-	// Setup protocol handler
+	// Setup protocol
 	cmdHandler := command.NewHandler(n)
 	proto := protocol.NewProtocol(n, cmdHandler)
 	cmdHandler.SetProtocol(proto)
 	n.SetProtocol(proto)
 
-	// Start mDNS discovery
+	// Start discovery
 	disc := discovery.NewMDNSDiscovery(n)
 	if err := disc.Start(); err != nil {
 		logger.Fatalf("Failed to start discovery: %v", err)
 	}
 
+	// Start IPC server
+	server, err := ipc.NewAgentServer(func(cmd string, args []string) string {
+		return handleCommand(cmd, args, n, proto)
+	})
+	if err != nil {
+		logger.Fatalf("Failed to start IPC: %v", err)
+	}
+
+	// Forward P2P responses to controller
+	cmdHandler.SetResponseCallback(func(source, payload string) {
+		server.Push(payload)
+	})
+
 	logger.Debug("Node started: %s", n.ID().String())
 	logger.Debug("Listening on: %s", n.Addrs())
 
-	// Start IPC server for controller
-	ipcServer, err := ipc.NewServer(func(msg *ipc.Message) *ipc.Message {
-		return handleIPCMessage(msg, n, proto)
-	})
-	if err != nil {
-		logger.Fatalf("Failed to start IPC server: %v", err)
-	}
-	ipcServer.Start()
-
-	// Set response callback to forward responses to controller via IPC
-	cmdHandler.SetResponseCallback(func(source, payload string) {
-		logger.Debug("Response received from %s: %s", source[:16], payload)
-		// Forward to controller
-		if err := ipcServer.SendToController(source, payload); err != nil {
-			logger.Debug("Failed to send response to controller: %v", err)
-		}
-	})
-
-	// Wait for shutdown signal
+	// Wait for shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	logger.Debug("Shutting down...")
-	ipcServer.Stop()
+	server.Stop()
 	disc.Stop()
-	cancel()
 }
 
-func handleIPCMessage(msg *ipc.Message, n *node.Node, proto *protocol.Protocol) *ipc.Message {
-	switch msg.Type {
-	case ipc.MsgConnect:
-		return &ipc.Message{
-			Type:    ipc.MsgResponse,
-			Payload: "connected",
-		}
+func handleCommand(cmd string, args []string, n *node.Node, proto *protocol.Protocol) string {
+	switch cmd {
+	case "id":
+		return n.ID().String()
 
-	case ipc.MsgID:
-		return &ipc.Message{
-			Type:    ipc.MsgResponse,
-			Payload: n.ID().String(),
-		}
+	case "peers":
+		return n.ListPeers()
 
-	case ipc.MsgPeers:
-		return &ipc.Message{
-			Type:    ipc.MsgResponse,
-			Payload: n.ListPeers(),
+	case "send":
+		if len(args) < 2 {
+			return "usage: send <nodeID> <command>"
 		}
+		proto.SendCommand(args[0], strings.Join(args[1:], " "))
+		return "command sent"
 
-	case ipc.MsgSend:
-		if len(msg.Args) < 2 {
-			return &ipc.Message{
-				Type:    ipc.MsgError,
-				Payload: "usage: send <nodeID> <command>",
-			}
-		}
-		targetID := msg.Args[0]
-		command := msg.Args[1]
-		proto.SendCommand(targetID, command)
-		return &ipc.Message{
-			Type:    ipc.MsgResponse,
-			Payload: "command sent",
-		}
-
-	case ipc.MsgQuit:
-		return &ipc.Message{
-			Type:    ipc.MsgResponse,
-			Payload: "goodbye",
-		}
+	case "quit":
+		return "goodbye"
 
 	default:
-		return &ipc.Message{
-			Type:    ipc.MsgError,
-			Payload: "unknown command",
-		}
+		return fmt.Sprintf("unknown command: %s", cmd)
 	}
 }

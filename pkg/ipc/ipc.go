@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 
 	"nostaliga/pkg/logger"
@@ -13,51 +14,34 @@ import (
 
 const SocketPath = "/tmp/nostalgia-agent.sock"
 
-// MessageType defines IPC message types
-type MessageType string
-
-const (
-	MsgConnect       MessageType = "connect"
-	MsgPeers         MessageType = "peers"
-	MsgID            MessageType = "id"
-	MsgSend          MessageType = "send"
-	MsgResponse      MessageType = "response"
-	MsgError         MessageType = "error"
-	MsgQuit          MessageType = "quit"
-	MsgAsyncResponse MessageType = "async_response" // For async responses from mesh
-)
-
-// Message represents an IPC message between controller and agent
-type Message struct {
-	Type    MessageType `json:"type"`
-	Payload string      `json:"payload"`
-	Args    []string    `json:"args,omitempty"`
-	Source  string      `json:"source,omitempty"` // For async responses
+// Internal message format (hidden from users)
+type message struct {
+	Cmd      string   `json:"cmd"`
+	Args     []string `json:"args,omitempty"`
+	Response string   `json:"response,omitempty"`
+	IsAsync  bool     `json:"async,omitempty"`
 }
 
-// UnmarshalMessage unmarshals JSON data into a Message
-func UnmarshalMessage(data []byte) (*Message, error) {
-	var msg Message
-	err := json.Unmarshal(data, &msg)
-	return &msg, err
-}
+// ============================================================================
+// AGENT SERVER - Simple API for the agent
+// ============================================================================
 
-// Handler is called when the server receives a message
-type Handler func(msg *Message) *Message
+// CommandHandler processes a command and returns a response
+type CommandHandler func(cmd string, args []string) string
 
-// Server handles IPC connections from controller
-type Server struct {
+// AgentServer handles controller connections
+type AgentServer struct {
 	listener    net.Listener
-	handler     Handler
-	done        chan struct{}
-	wg          sync.WaitGroup
+	handler     CommandHandler
 	connections map[net.Conn]bool
 	connMu      sync.RWMutex
+	done        chan struct{}
+	wg          sync.WaitGroup
 }
 
-// NewServer creates a new IPC server
-func NewServer(handler Handler) (*Server, error) {
-	// Remove existing socket file
+// NewAgentServer creates and starts the IPC server
+// handler receives commands like "id", "peers", "send" with args and returns response text
+func NewAgentServer(handler CommandHandler) (*AgentServer, error) {
 	os.Remove(SocketPath)
 
 	listener, err := net.Listen("unix", SocketPath)
@@ -65,41 +49,41 @@ func NewServer(handler Handler) (*Server, error) {
 		return nil, fmt.Errorf("failed to create socket: %w", err)
 	}
 
-	return &Server{
+	s := &AgentServer{
 		listener:    listener,
 		handler:     handler,
-		done:        make(chan struct{}),
 		connections: make(map[net.Conn]bool),
-	}, nil
-}
+		done:        make(chan struct{}),
+	}
 
-// Start begins accepting connections
-func (s *Server) Start() {
 	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		for {
-			conn, err := s.listener.Accept()
-			if err != nil {
-				select {
-				case <-s.done:
-					return
-				default:
-					logger.Debug("IPC accept error: %v", err)
-					continue
-				}
-			}
-			s.wg.Add(1)
-			go s.handleConnection(conn)
-		}
-	}()
+	go s.acceptLoop()
+
 	logger.Debug("IPC server started on %s", SocketPath)
+	return s, nil
 }
 
-func (s *Server) handleConnection(conn net.Conn) {
+func (s *AgentServer) acceptLoop() {
 	defer s.wg.Done()
+	for {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			select {
+			case <-s.done:
+				return
+			default:
+				continue
+			}
+		}
+		s.wg.Add(1)
+		go s.handleConn(conn)
+	}
+}
 
-	// Register connection
+func (s *AgentServer) handleConn(conn net.Conn) {
+	defer s.wg.Done()
+	defer conn.Close()
+
 	s.connMu.Lock()
 	s.connections[conn] = true
 	s.connMu.Unlock()
@@ -109,7 +93,6 @@ func (s *Server) handleConnection(conn net.Conn) {
 		s.connMu.Lock()
 		delete(s.connections, conn)
 		s.connMu.Unlock()
-		conn.Close()
 		logger.Debug("Controller disconnected")
 	}()
 
@@ -120,110 +103,137 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		var msg Message
-		if err := json.Unmarshal(data, &msg); err != nil {
-			logger.Debug("IPC unmarshal error: %v", err)
+		var msg message
+		if json.Unmarshal(data, &msg) != nil {
 			continue
 		}
 
-		response := s.handler(&msg)
-		if response != nil {
-			respData, err := json.Marshal(response)
-			if err != nil {
-				logger.Debug("IPC marshal error: %v", err)
-				continue
-			}
-			conn.Write(append(respData, '\n'))
-		}
+		// Call handler and send response
+		response := s.handler(msg.Cmd, msg.Args)
+		resp := message{Response: response}
+		respData, _ := json.Marshal(resp)
+		conn.Write(append(respData, '\n'))
 
-		if msg.Type == MsgQuit {
+		if msg.Cmd == "quit" {
 			return
 		}
 	}
 }
 
-// SendToController sends an async response to ALL connected controllers
-func (s *Server) SendToController(source, payload string) error {
+// Push sends an async message to all connected controllers
+func (s *AgentServer) Push(text string) {
 	s.connMu.RLock()
 	defer s.connMu.RUnlock()
 
-	if len(s.connections) == 0 {
-		logger.Debug("No active controller connections")
-		return fmt.Errorf("no active controller connection")
-	}
-
-	msg := &Message{
-		Type:    MsgAsyncResponse,
-		Source:  source,
-		Payload: payload,
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
+	msg := message{Response: text, IsAsync: true}
+	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
 
-	var lastErr error
 	for conn := range s.connections {
-		if _, err := conn.Write(data); err != nil {
-			lastErr = err
-			logger.Debug("Failed to write to controller: %v", err)
-		}
+		conn.Write(data)
 	}
-
-	return lastErr
 }
 
 // Stop shuts down the server
-func (s *Server) Stop() {
+func (s *AgentServer) Stop() {
 	close(s.done)
 	s.listener.Close()
 	os.Remove(SocketPath)
 	s.wg.Wait()
 }
 
-// Client connects to the agent IPC server
-type Client struct {
-	conn net.Conn
-	mu   sync.Mutex
+// ============================================================================
+// CONTROLLER CLIENT - Simple API for the controller
+// ============================================================================
+
+// ControllerClient connects to the agent
+type ControllerClient struct {
+	conn       net.Conn
+	reader     *bufio.Reader
+	responseCh chan string
+	asyncCh    chan string
+	mu         sync.Mutex
 }
 
-// NewClient creates a new IPC client
-func NewClient() (*Client, error) {
+// NewControllerClient connects to a running agent
+// Returns error if no agent is running
+func NewControllerClient() (*ControllerClient, error) {
+	if _, err := os.Stat(SocketPath); err != nil {
+		return nil, fmt.Errorf("no agent running")
+	}
+
 	conn, err := net.Dial("unix", SocketPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to agent: %w", err)
+		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
-	return &Client{conn: conn}, nil
+
+	c := &ControllerClient{
+		conn:       conn,
+		reader:     bufio.NewReader(conn),
+		responseCh: make(chan string, 1),
+		asyncCh:    make(chan string, 100),
+	}
+
+	go c.readLoop()
+	return c, nil
 }
 
-// WriteMessage writes a message to the server (thread-safe)
-func (c *Client) WriteMessage(msg *Message) error {
+func (c *ControllerClient) readLoop() {
+	for {
+		data, err := c.reader.ReadBytes('\n')
+		if err != nil {
+			close(c.asyncCh)
+			return
+		}
+
+		var msg message
+		if json.Unmarshal(data, &msg) != nil {
+			continue
+		}
+
+		if msg.IsAsync {
+			c.asyncCh <- msg.Response
+		} else {
+			c.responseCh <- msg.Response
+		}
+	}
+}
+
+// Send sends a command and waits for response
+func (c *ControllerClient) Send(cmd string, args ...string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
+	msg := message{Cmd: cmd, Args: args}
+	data, _ := json.Marshal(msg)
+	if _, err := c.conn.Write(append(data, '\n')); err != nil {
+		return "", err
 	}
 
-	_, err = c.conn.Write(append(data, '\n'))
-	return err
+	resp := <-c.responseCh
+	return resp, nil
 }
 
-// Conn returns the underlying connection for reading
-func (c *Client) Conn() net.Conn {
-	return c.conn
+// AsyncMessages returns channel for receiving async messages from agent
+func (c *ControllerClient) AsyncMessages() <-chan string {
+	return c.asyncCh
 }
 
-// Close closes the client connection
-func (c *Client) Close() error {
-	return c.conn.Close()
+// Close closes the connection
+func (c *ControllerClient) Close() {
+	c.conn.Close()
 }
 
-// IsAgentRunning checks if an agent is running by checking socket file exists
-func IsAgentRunning() bool {
-	_, err := os.Stat(SocketPath)
-	return err == nil
+// ============================================================================
+// HELPER - Parse command line input
+// ============================================================================
+
+// ParseInput splits user input into command and args
+// Example: "send node123 whoami" -> ("send", ["node123", "whoami"])
+func ParseInput(input string) (cmd string, args []string) {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return parts[0], parts[1:]
 }
