@@ -2,5 +2,5 @@ package static
 
 import _ "embed"
 
-//go:embed graph.html
+//go:embed graph.gohtml
 var GraphHTML []byte
