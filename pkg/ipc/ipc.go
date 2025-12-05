@@ -14,22 +14,22 @@ import (
 
 const SocketPath = "/tmp/nostalgia-agent.sock"
 
-// Internal message format (hidden from users)
+// Internal message format
 type message struct {
 	Cmd      string   `json:"cmd"`
 	Args     []string `json:"args,omitempty"`
 	Response string   `json:"response,omitempty"`
 	IsAsync  bool     `json:"async,omitempty"`
+	Event    string   `json:"event,omitempty"` // peer_connected, peer_disconnected
+	Data     string   `json:"data,omitempty"`  // event data
 }
 
 // ============================================================================
-// AGENT SERVER - Simple API for the agent
+// AGENT SERVER
 // ============================================================================
 
-// CommandHandler processes a command and returns a response
 type CommandHandler func(cmd string, args []string) string
 
-// AgentServer handles controller connections
 type AgentServer struct {
 	listener    net.Listener
 	handler     CommandHandler
@@ -39,8 +39,6 @@ type AgentServer struct {
 	wg          sync.WaitGroup
 }
 
-// NewAgentServer creates and starts the IPC server
-// handler receives commands like "id", "peers", "send" with args and returns response text
 func NewAgentServer(handler CommandHandler) (*AgentServer, error) {
 	os.Remove(SocketPath)
 
@@ -108,7 +106,6 @@ func (s *AgentServer) handleConn(conn net.Conn) {
 			continue
 		}
 
-		// Call handler and send response
 		response := s.handler(msg.Cmd, msg.Args)
 		resp := message{Response: response}
 		respData, _ := json.Marshal(resp)
@@ -120,12 +117,20 @@ func (s *AgentServer) handleConn(conn net.Conn) {
 	}
 }
 
-// Push sends an async message to all connected controllers
+// Push sends async text to all controllers
 func (s *AgentServer) Push(text string) {
+	s.broadcast(message{Response: text, IsAsync: true})
+}
+
+// PushEvent sends an event notification to all controllers
+func (s *AgentServer) PushEvent(event, data string) {
+	s.broadcast(message{Event: event, Data: data, IsAsync: true})
+}
+
+func (s *AgentServer) broadcast(msg message) {
 	s.connMu.RLock()
 	defer s.connMu.RUnlock()
 
-	msg := message{Response: text, IsAsync: true}
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
 
@@ -134,7 +139,6 @@ func (s *AgentServer) Push(text string) {
 	}
 }
 
-// Stop shuts down the server
 func (s *AgentServer) Stop() {
 	close(s.done)
 	s.listener.Close()
@@ -143,20 +147,23 @@ func (s *AgentServer) Stop() {
 }
 
 // ============================================================================
-// CONTROLLER CLIENT - Simple API for the controller
+// CONTROLLER CLIENT
 // ============================================================================
 
-// ControllerClient connects to the agent
+type Event struct {
+	Type string // peer_connected, peer_disconnected
+	Data string // peer ID
+}
+
 type ControllerClient struct {
 	conn       net.Conn
 	reader     *bufio.Reader
 	responseCh chan string
 	asyncCh    chan string
+	eventCh    chan Event
 	mu         sync.Mutex
 }
 
-// NewControllerClient connects to a running agent
-// Returns error if no agent is running
 func NewControllerClient() (*ControllerClient, error) {
 	if _, err := os.Stat(SocketPath); err != nil {
 		return nil, fmt.Errorf("no agent running")
@@ -172,6 +179,7 @@ func NewControllerClient() (*ControllerClient, error) {
 		reader:     bufio.NewReader(conn),
 		responseCh: make(chan string, 1),
 		asyncCh:    make(chan string, 100),
+		eventCh:    make(chan Event, 100),
 	}
 
 	go c.readLoop()
@@ -183,6 +191,7 @@ func (c *ControllerClient) readLoop() {
 		data, err := c.reader.ReadBytes('\n')
 		if err != nil {
 			close(c.asyncCh)
+			close(c.eventCh)
 			return
 		}
 
@@ -191,7 +200,9 @@ func (c *ControllerClient) readLoop() {
 			continue
 		}
 
-		if msg.IsAsync {
+		if msg.Event != "" {
+			c.eventCh <- Event{Type: msg.Event, Data: msg.Data}
+		} else if msg.IsAsync {
 			c.asyncCh <- msg.Response
 		} else {
 			c.responseCh <- msg.Response
@@ -199,7 +210,6 @@ func (c *ControllerClient) readLoop() {
 	}
 }
 
-// Send sends a command and waits for response
 func (c *ControllerClient) Send(cmd string, args ...string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -214,22 +224,14 @@ func (c *ControllerClient) Send(cmd string, args ...string) (string, error) {
 	return resp, nil
 }
 
-// AsyncMessages returns channel for receiving async messages from agent
-func (c *ControllerClient) AsyncMessages() <-chan string {
-	return c.asyncCh
-}
-
-// Close closes the connection
-func (c *ControllerClient) Close() {
-	c.conn.Close()
-}
+func (c *ControllerClient) AsyncMessages() <-chan string { return c.asyncCh }
+func (c *ControllerClient) Events() <-chan Event         { return c.eventCh }
+func (c *ControllerClient) Close()                       { c.conn.Close() }
 
 // ============================================================================
-// HELPER - Parse command line input
+// HELPERS
 // ============================================================================
 
-// ParseInput splits user input into command and args
-// Example: "send node123 whoami" -> ("send", ["node123", "whoami"])
 func ParseInput(input string) (cmd string, args []string) {
 	parts := strings.Fields(input)
 	if len(parts) == 0 {

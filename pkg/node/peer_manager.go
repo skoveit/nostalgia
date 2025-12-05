@@ -1,16 +1,21 @@
 package node
 
 import (
-	"nostaliga/pkg/logger"
 	"sync"
 	"time"
+
+	"nostaliga/pkg/logger"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
+// PeerCallback is called when a peer connects or disconnects
+type PeerCallback func(peerID string, connected bool)
+
 type PeerManager struct {
 	peers    map[peer.ID]time.Time
 	maxPeers int
+	callback PeerCallback
 	mu       sync.RWMutex
 }
 
@@ -19,6 +24,12 @@ func NewPeerManager(maxPeers int) *PeerManager {
 		peers:    make(map[peer.ID]time.Time),
 		maxPeers: maxPeers,
 	}
+}
+
+func (pm *PeerManager) SetCallback(cb PeerCallback) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.callback = cb
 }
 
 func (pm *PeerManager) Add(p peer.ID) bool {
@@ -35,6 +46,10 @@ func (pm *PeerManager) Add(p peer.ID) bool {
 
 	pm.peers[p] = time.Now()
 	logger.Debug("→ Peer connected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String())
+
+	if pm.callback != nil {
+		go pm.callback(p.String(), true)
+	}
 	return true
 }
 
@@ -45,6 +60,10 @@ func (pm *PeerManager) Remove(p peer.ID) {
 	if _, exists := pm.peers[p]; exists {
 		delete(pm.peers, p)
 		logger.Debug("← Peer disconnected [%d/%d]: %s", len(pm.peers), pm.maxPeers, p.String())
+
+		if pm.callback != nil {
+			go pm.callback(p.String(), false)
+		}
 	}
 }
 

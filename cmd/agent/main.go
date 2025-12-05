@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -47,8 +48,9 @@ func main() {
 	}
 
 	// Start IPC server
-	server, err := ipc.NewAgentServer(func(cmd string, args []string) string {
-		return handleCommand(cmd, args, n, proto)
+	var server *ipc.AgentServer
+	server, err = ipc.NewAgentServer(func(cmd string, args []string) string {
+		return handleCommand(cmd, args, n, proto, server)
 	})
 	if err != nil {
 		logger.Fatalf("Failed to start IPC: %v", err)
@@ -57,6 +59,15 @@ func main() {
 	// Forward P2P responses to controller
 	cmdHandler.SetResponseCallback(func(source, payload string) {
 		server.Push(payload)
+	})
+
+	// Notify controller on peer changes
+	n.PeerManager().SetCallback(func(peerID string, connected bool) {
+		if connected {
+			server.PushEvent("peer_connected", peerID)
+		} else {
+			server.PushEvent("peer_disconnected", peerID)
+		}
 	})
 
 	logger.Debug("Node started: %s", n.ID().String())
@@ -71,13 +82,23 @@ func main() {
 	disc.Stop()
 }
 
-func handleCommand(cmd string, args []string, n *node.Node, proto *protocol.Protocol) string {
+func handleCommand(cmd string, args []string, n *node.Node, proto *protocol.Protocol, _ *ipc.AgentServer) string {
 	switch cmd {
 	case "id":
 		return n.ID().String()
 
 	case "peers":
 		return n.ListPeers()
+
+	case "peerlist":
+		// Return JSON list of peer IDs for tab completion
+		peers := n.PeerManager().List()
+		ids := make([]string, len(peers))
+		for i, p := range peers {
+			ids[i] = p.String()
+		}
+		data, _ := json.Marshal(ids)
+		return string(data)
 
 	case "send":
 		if len(args) < 2 {

@@ -34,7 +34,7 @@ func (h *Handler) SetResponseCallback(cb ResponseCallback) {
 
 func (h *Handler) Handle(msg *protocol.Message) error {
 	if msg.Type == protocol.MsgTypeResponse {
-		logger.Debug("✓ Response from %s: %s", msg.Source[:16], msg.Payload)
+		logger.Debug("✓ Response from: %s", msg.Source)
 		// Forward response to callback (for controller)
 		if h.responseCallback != nil {
 			h.responseCallback(msg.Source, msg.Payload)
