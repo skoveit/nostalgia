@@ -13,12 +13,13 @@ func NewExecutor() *Executor {
 }
 
 func (e *Executor) Execute(command string) (string, error) {
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
+	command = strings.TrimSpace(command)
+	if command == "" {
 		return "", nil
 	}
 
-	cmd := exec.Command(parts[0], parts[1:]...)
+	// Run through shell for proper variable expansion, pipes, etc.
+	cmd := exec.Command("/bin/sh", "-c", command)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -26,10 +27,23 @@ func (e *Executor) Execute(command string) (string, error) {
 
 	err := cmd.Run()
 
+	// Combine stdout and stderr
 	output := stdout.String()
-	if stderr.Len() > 0 {
-		output += "\n" + stderr.String()
+	errOutput := stderr.String()
+
+	if errOutput != "" {
+		if output != "" {
+			output += "\n"
+		}
+		output += errOutput
 	}
 
-	return strings.TrimSpace(output), err
+	output = strings.TrimSpace(output)
+
+	// If there was an error but no output, include the error message
+	if err != nil && output == "" {
+		output = err.Error()
+	}
+
+	return output, err
 }

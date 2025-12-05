@@ -169,7 +169,7 @@ func handleCommand(cmd string, args []string, n *node.Node, proto *protocol.Prot
 			return "usage: send <nodeID> <command>"
 		}
 		proto.SendCommand(args[0], strings.Join(args[1:], " "))
-		return "command sent"
+		return ""
 
 	case "quit":
 		return "goodbye"
