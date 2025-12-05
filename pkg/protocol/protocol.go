@@ -9,6 +9,7 @@ import (
 
 	"nostaliga/pkg/logger"
 	"nostaliga/pkg/node"
+	"nostaliga/pkg/pubsub"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -23,10 +24,14 @@ type CommandHandler interface {
 // ResponseCallback is called when a response is received
 type ResponseCallback func(source, payload string)
 
+// PongCallback is called when a radar pong is received
+type PongCallback func(peerID, payload string)
+
 type Protocol struct {
 	node             *node.Node
 	handler          CommandHandler
 	responseCallback ResponseCallback
+	pongCallback     PongCallback
 	callbackMu       sync.RWMutex
 }
 
@@ -36,8 +41,85 @@ func NewProtocol(n *node.Node, handler CommandHandler) *Protocol {
 		handler: handler,
 	}
 
+	// Keep direct stream handler for targeted messages
 	n.Host().SetStreamHandler(ProtocolID, p.HandleStream)
+
+	// Subscribe to GossipSub topic and start listening
+	go p.startPubSubListener()
+
 	return p
+}
+
+// startPubSubListener subscribes to the mesh topic and processes incoming messages
+func (p *Protocol) startPubSubListener() {
+	ps := p.node.PubSub()
+	if ps == nil {
+		logger.Debug("PubSub not initialized, skipping listener")
+		return
+	}
+
+	sub, err := ps.Join(pubsub.DefaultTopic)
+	if err != nil {
+		logger.Debug("Failed to join pubsub topic: %v", err)
+		return
+	}
+
+	logger.Debug("Subscribed to GossipSub topic: %s", pubsub.DefaultTopic)
+
+	for {
+		msg, err := sub.Next(p.node.Context())
+		if err != nil {
+			// Context cancelled or subscription closed
+			return
+		}
+
+		// Ignore messages from self
+		if msg.ReceivedFrom == p.node.ID() {
+			continue
+		}
+
+		p.handlePubSubMessage(msg.Data)
+	}
+}
+
+// handlePubSubMessage processes a message received via GossipSub
+func (p *Protocol) handlePubSubMessage(data []byte) {
+	msg, err := UnmarshalMessage(data)
+	if err != nil {
+		return
+	}
+
+	// Check if message already visited this node (loop prevention)
+	if msg.HasVisited(p.node.ID()) {
+		return
+	}
+
+	// Handle broadcast messages (ping/pong for radar)
+	switch msg.Type {
+	case MsgTypePing:
+		// Respond to radar ping with pong
+		logger.Debug("📡 Radar ping from %s", msg.Source)
+		p.sendPong(msg.Source, msg.ID)
+		return
+	case MsgTypePong:
+		// Forward pong to callback
+		p.callbackMu.RLock()
+		cb := p.pongCallback
+		p.callbackMu.RUnlock()
+		if cb != nil {
+			cb(msg.Source, msg.Payload)
+		}
+		return
+	}
+
+	// Check if message is for this node
+	if msg.Target == p.node.ID().String() {
+		logger.Debug("📩 [GossipSub] Received %s", msg.Type.String())
+		if err := p.handler.Handle(msg); err != nil {
+			logger.Debug("Error handling command: %v", err)
+		}
+	}
+	// No need to re-route — GossipSub handles propagation
 }
 
 // SetResponseCallback sets a callback for when responses are received
@@ -47,6 +129,27 @@ func (p *Protocol) SetResponseCallback(cb ResponseCallback) {
 	p.responseCallback = cb
 }
 
+// SetPongCallback sets a callback for radar pong responses
+func (p *Protocol) SetPongCallback(cb PongCallback) {
+	p.callbackMu.Lock()
+	defer p.callbackMu.Unlock()
+	p.pongCallback = cb
+}
+
+// Broadcast sends a ping to all nodes in the network (for radar)
+func (p *Protocol) Broadcast(pingID string) {
+	msg := NewMessage(MsgTypePing, p.node.ID().String(), "*", pingID)
+	logger.Debug("📡 Broadcasting radar ping: %s", pingID)
+	p.publishMessage(msg)
+}
+
+// sendPong responds to a radar ping
+func (p *Protocol) sendPong(targetID, pingID string) {
+	msg := NewMessage(MsgTypePong, p.node.ID().String(), targetID, pingID)
+	p.publishMessage(msg)
+}
+
+// HandleStream handles direct stream messages (backward compatibility)
 func (p *Protocol) HandleStream(s network.Stream) {
 	defer s.Close()
 
@@ -70,24 +173,23 @@ func (p *Protocol) HandleStream(s network.Stream) {
 
 	// Check if message is for this node
 	if msg.Target == p.node.ID().String() {
-		logger.Debug("📩 Received %s", msg.Type.String())
+		logger.Debug("📩 [Direct] Received %s", msg.Type.String())
 		if err := p.handler.Handle(msg); err != nil {
 			logger.Debug("Error handling command: %v", err)
 		}
 		return
 	}
 
-	// Route message if TTL > 0
+	// Forward via GossipSub if not for us
 	if msg.TTL > 0 {
-		logger.Debug("🔀 Routing message to %s", msg.Target)
-		p.routeMessage(msg)
+		p.publishMessage(msg)
 	}
 }
 
 func (p *Protocol) Send(msgType MessageType, targetID, payload string) {
 	msg := NewMessage(msgType, p.node.ID().String(), targetID, payload)
 
-	// Try direct connection first
+	// Try direct connection first if peer is known
 	target, err := peer.Decode(targetID)
 	if err != nil {
 		logger.Debug("Invalid peer ID: %v", err)
@@ -95,15 +197,33 @@ func (p *Protocol) Send(msgType MessageType, targetID, payload string) {
 	}
 
 	if p.node.PeerManager().Has(target) {
-		if err := p.sendMessage(target, msg); err == nil {
+		if err := p.sendDirect(target, msg); err == nil {
 			logger.Debug("📤 %s sent directly to %s", msgType.String(), targetID)
 			return
 		}
 	}
 
-	// Route through mesh
-	logger.Debug("🔀 Routing %s to %s", msgType.String(), targetID)	
-	p.routeMessage(msg)
+	// Broadcast via GossipSub
+	logger.Debug("📡 Broadcasting %s via GossipSub to %s", msgType.String(), targetID)
+	p.publishMessage(msg)
+}
+
+// publishMessage publishes a message to the GossipSub topic
+func (p *Protocol) publishMessage(msg *Message) {
+	ps := p.node.PubSub()
+	if ps == nil {
+		return
+	}
+
+	data, err := msg.Marshal()
+	if err != nil {
+		logger.Debug("Failed to marshal message: %v", err)
+		return
+	}
+
+	if err := ps.Publish(pubsub.DefaultTopic, data); err != nil {
+		logger.Debug("Failed to publish message: %v", err)
+	}
 }
 
 // SendCommand is a convenience wrapper for sending commands
@@ -116,16 +236,8 @@ func (p *Protocol) SendResponse(targetID, response string) {
 	p.Send(MsgTypeResponse, targetID, response)
 }
 
-func (p *Protocol) routeMessage(msg *Message) {
-	peers := p.node.PeerManager().List()
-	for _, peerID := range peers {
-		if !msg.HasVisited(peerID) {
-			go p.sendMessage(peerID, msg)
-		}
-	}
-}
-
-func (p *Protocol) sendMessage(target peer.ID, msg *Message) error {
+// sendDirect sends a message directly to a peer via stream
+func (p *Protocol) sendDirect(target peer.ID, msg *Message) error {
 	ctx, cancel := context.WithTimeout(p.node.Context(), 5*time.Second)
 	defer cancel()
 

@@ -8,16 +8,26 @@ import (
 	"sync"
 
 	"nostaliga/pkg/logger"
+	"nostaliga/pkg/pubsub"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 )
 
-const MaxPeers = 5
+// Connection limits matching GossipSub mesh parameters
+const (
+	// LowWater is the minimum number of connections to maintain (D_lo)
+	LowWater = 4
+	// HighWater is the maximum number of connections (D_hi)
+	HighWater = 8
+	// GracePeriod is how long to wait before pruning connections
+	GracePeriod = 0
+)
 
 type Protocol interface {
 	HandleStream(network.Stream)
@@ -27,6 +37,7 @@ type Node struct {
 	host      host.Host
 	ctx       context.Context
 	peerMgr   *PeerManager
+	ps        *pubsub.PubSub
 	protocol  Protocol
 	protoLock sync.RWMutex
 }
@@ -37,12 +48,19 @@ func NewNode(ctx context.Context) (*Node, error) {
 		return nil, err
 	}
 
+	// Create connection manager with D_lo and D_hi limits
+	cm, err := connmgr.NewConnManager(LowWater, HighWater, connmgr.WithGracePeriod(GracePeriod))
+	if err != nil {
+		return nil, err
+	}
+
 	opts := []libp2p.Option{
 		libp2p.Identity(priv),
 		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
 		libp2p.DisableRelay(),
 		libp2p.NATPortMap(),
 		libp2p.EnableNATService(),
+		libp2p.ConnectionManager(cm), // Limit connections
 	}
 
 	h, err := libp2p.New(opts...)
@@ -50,10 +68,18 @@ func NewNode(ctx context.Context) (*Node, error) {
 		return nil, err
 	}
 
+	// Initialize GossipSub with explicit mesh parameters
+	ps, err := pubsub.New(ctx, h)
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
+
 	n := &Node{
 		host:    h,
 		ctx:     ctx,
-		peerMgr: NewPeerManager(MaxPeers),
+		peerMgr: NewPeerManager(HighWater), // Track up to HighWater peers
+		ps:      ps,
 	}
 
 	h.Network().Notify(&network.NotifyBundle{
@@ -62,6 +88,7 @@ func NewNode(ctx context.Context) (*Node, error) {
 		},
 	})
 
+	logger.Debug("Node created with connection limits: low=%d, high=%d", LowWater, HighWater)
 	return n, nil
 }
 
@@ -91,6 +118,11 @@ func (n *Node) PeerManager() *PeerManager {
 	return n.peerMgr
 }
 
+// PubSub returns the GossipSub instance
+func (n *Node) PubSub() *pubsub.PubSub {
+	return n.ps
+}
+
 // ListPeers logs peer list (for debug) and returns formatted string
 func (n *Node) ListPeers() string {
 	peers := n.peerMgr.List()
@@ -100,7 +132,7 @@ func (n *Node) ListPeers() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Connected peers (%d/%d):\n", len(peers), MaxPeers))
+	sb.WriteString(fmt.Sprintf("Connected peers (%d/%d):\n", len(peers), HighWater))
 	for _, p := range peers {
 		sb.WriteString(fmt.Sprintf("  - %s\n", p.String()))
 	}

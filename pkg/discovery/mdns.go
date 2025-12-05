@@ -46,9 +46,14 @@ func (d *MDNSDiscovery) HandlePeerFound(pi peer.AddrInfo) {
 		return
 	}
 
-	if d.node.PeerManager().Has(pi.ID) || d.node.PeerManager().IsFull() {
+	// Skip if already connected
+	if d.node.PeerManager().Has(pi.ID) {
 		return
 	}
+
+	// Connection Manager handles limits - just add to peerstore
+	// GossipSub will decide which peers to actually mesh with
+	d.node.Host().Peerstore().AddAddrs(pi.ID, pi.Addrs, peerstore.PermanentAddrTTL)
 
 	// Random jitter for OPSEC
 	jitter := time.Duration(randInt(500, 2000)) * time.Millisecond
@@ -60,8 +65,6 @@ func (d *MDNSDiscovery) HandlePeerFound(pi peer.AddrInfo) {
 func (d *MDNSDiscovery) connectPeer(pi peer.AddrInfo) {
 	ctx, cancel := context.WithTimeout(d.node.Context(), 10*time.Second)
 	defer cancel()
-
-	d.node.Host().Peerstore().AddAddrs(pi.ID, pi.Addrs, peerstore.PermanentAddrTTL)
 
 	if err := d.node.Host().Connect(ctx, pi); err != nil {
 		return

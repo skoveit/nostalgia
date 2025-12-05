@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"nostaliga/pkg/ipc"
 
@@ -20,14 +22,13 @@ var (
 	mu           sync.RWMutex
 )
 
-var commands = []string{"use", "run", "back", "send", "peers", "id", "help", "quit", "exit"}
+var commands = []string{"use", "run", "back", "send", "peers", "radar", "clear", "cls", "id", "help", "quit", "exit"}
 
 func main() {
 	var err error
 	client, err = ipc.NewControllerClient()
 	if err != nil {
-		fmt.Println("Error: No running agent found")
-		fmt.Println("Start the agent first: ./agent")
+		fmt.Println("No running agent found 🙁")
 		os.Exit(1)
 	}
 	defer client.Close()
@@ -190,6 +191,12 @@ func execute(input string) {
 		resp, _ := client.Send("peers")
 		fmt.Println(resp)
 
+	case "radar":
+		runRadar()
+
+	case "clear", "cls":
+		fmt.Print("\033[H\033[2J")
+
 	case "id":
 		resp, _ := client.Send("id")
 		fmt.Println(resp)
@@ -202,6 +209,100 @@ func execute(input string) {
 	default:
 		fmt.Printf("Unknown command: %s (type 'help' for commands)\n", cmd)
 	}
+}
+
+// RadarResult matches agent's struct
+type RadarResult struct {
+	PeerID    string `json:"peer_id"`
+	Latency   int64  `json:"latency_ms"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+func runRadar() {
+	fmt.Println()
+	printRadarAnimation()
+
+	// Request radar scan from agent
+	resp, err := client.Send("radar", "3s")
+	if err != nil {
+		fmt.Println("Radar failed:", err)
+		return
+	}
+
+	var results []RadarResult
+	if err := json.Unmarshal([]byte(resp), &results); err != nil {
+		fmt.Println("Failed to parse radar results")
+		return
+	}
+
+	// Sort by latency
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Latency < results[j].Latency
+	})
+
+	printRadarResults(results)
+}
+
+func printRadarAnimation() {
+	frames := []string{
+		"    ◜    ",
+		"     ◝   ",
+		"      ◞  ",
+		"       ◟ ",
+		"      ◞  ",
+		"     ◝   ",
+		"    ◜    ",
+		"   ◟     ",
+		"  ◞      ",
+		" ◝       ",
+		"  ◞      ",
+		"   ◟     ",
+	}
+
+	fmt.Print("  Scanning network ")
+	for i := 0; i < 12; i++ {
+		fmt.Printf("\r  Scanning network %s", frames[i%len(frames)])
+		time.Sleep(250 * time.Millisecond)
+	}
+	fmt.Print("\r                              \r")
+}
+
+func printRadarResults(results []RadarResult) {
+	if len(results) == 0 {
+		fmt.Println("  ╭─────────────────────────────────╮")
+		fmt.Println("  │  📡 RADAR - No nodes detected   │")
+		fmt.Println("  ╰─────────────────────────────────╯")
+		return
+	}
+
+	// Header
+	fmt.Println("  ╭────────────────────────────────────────────────────────────╮")
+	fmt.Printf("  │  📡 RADAR SCAN - %d node(s) detected                       │\n", len(results))
+	fmt.Println("  ├────────────────────────────────────────────────────────────┤")
+
+	// Results
+	for i, r := range results {
+		// Signal strength based on latency
+		var signal string
+		switch {
+		case r.Latency < 50:
+			signal = "████▓░░ EXCELLENT"
+		case r.Latency < 100:
+			signal = "███▓░░░ GOOD"
+		case r.Latency < 200:
+			signal = "██▓░░░░ FAIR"
+		case r.Latency < 500:
+			signal = "█▓░░░░░ WEAK"
+		default:
+			signal = "▓░░░░░░ POOR"
+		}
+
+		fmt.Printf("  │  %2d. %-20s  %4dms  %s  │\n", i+1, r.PeerID, r.Latency, signal)
+	}
+
+	// Footer
+	fmt.Println("  ╰────────────────────────────────────────────────────────────╯")
+	fmt.Println()
 }
 
 func selectPeer() {
@@ -271,6 +372,8 @@ Commands:
   back             Deselect peer
   send <id> <cmd>  Send command to specific peer
   peers            List connected peers
+  radar            Scan entire network for all nodes
+  clear, cls       Clear terminal screen
   id               Show node ID
   help             Show this help
   quit             Exit`)

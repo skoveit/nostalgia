@@ -13,6 +13,8 @@ const (
 	MsgTypeCommand  MessageType = "command"
 	MsgTypeResponse MessageType = "response"
 	MsgTypeRoute    MessageType = "route"
+	MsgTypePing     MessageType = "ping" // Radar discovery ping
+	MsgTypePong     MessageType = "pong" // Radar discovery response
 )
 
 // String returns the human-readable string representation of the message type
