@@ -3,6 +3,7 @@ package protocol
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"sync"
 	"time"
@@ -27,11 +28,15 @@ type ResponseCallback func(source, payload string)
 // PongCallback is called when a radar pong is received
 type PongCallback func(peerID, payload string)
 
+// TopoCallback is called when a topology response is received (peerID, list of that peer's connections)
+type TopoCallback func(peerID string, peers []string)
+
 type Protocol struct {
 	node             *node.Node
 	handler          CommandHandler
 	responseCallback ResponseCallback
 	pongCallback     PongCallback
+	topoCallback     TopoCallback
 	callbackMu       sync.RWMutex
 }
 
@@ -94,7 +99,7 @@ func (p *Protocol) handlePubSubMessage(data []byte) {
 		return
 	}
 
-	// Handle broadcast messages (ping/pong for radar)
+	// Handle broadcast messages (ping/pong for radar, topology for graph)
 	switch msg.Type {
 	case MsgTypePing:
 		// Respond to radar ping with pong
@@ -108,6 +113,24 @@ func (p *Protocol) handlePubSubMessage(data []byte) {
 		p.callbackMu.RUnlock()
 		if cb != nil {
 			cb(msg.Source, msg.Payload)
+		}
+		return
+	case MsgTypeTopoReq:
+		// Respond with our peer list
+		logger.Debug("🗺️ Topology request from %s", msg.Source)
+		p.sendTopologyResponse(msg.Source, msg.ID)
+		return
+	case MsgTypeTopoRes:
+		// Forward topology response to callback
+		p.callbackMu.RLock()
+		cb := p.topoCallback
+		p.callbackMu.RUnlock()
+		if cb != nil {
+			// Payload is JSON array of peer IDs
+			var peers []string
+			if err := json.Unmarshal([]byte(msg.Payload), &peers); err == nil {
+				cb(msg.Source, peers)
+			}
 		}
 		return
 	}
@@ -146,6 +169,32 @@ func (p *Protocol) Broadcast(pingID string) {
 // sendPong responds to a radar ping
 func (p *Protocol) sendPong(targetID, pingID string) {
 	msg := NewMessage(MsgTypePong, p.node.ID().String(), targetID, pingID)
+	p.publishMessage(msg)
+}
+
+// SetTopoCallback sets a callback for topology responses
+func (p *Protocol) SetTopoCallback(cb TopoCallback) {
+	p.callbackMu.Lock()
+	defer p.callbackMu.Unlock()
+	p.topoCallback = cb
+}
+
+// BroadcastTopology sends a topology request to all nodes
+func (p *Protocol) BroadcastTopology(reqID string) {
+	msg := NewMessage(MsgTypeTopoReq, p.node.ID().String(), "*", reqID)
+	logger.Debug("🗺️ Broadcasting topology request: %s", reqID)
+	p.publishMessage(msg)
+}
+
+// sendTopologyResponse responds to a topology request with our peer list
+func (p *Protocol) sendTopologyResponse(targetID, reqID string) {
+	peers := p.node.PeerManager().List()
+	peerIDs := make([]string, len(peers))
+	for i, pid := range peers {
+		peerIDs[i] = pid.String()
+	}
+	payload, _ := json.Marshal(peerIDs)
+	msg := NewMessage(MsgTypeTopoRes, p.node.ID().String(), targetID, string(payload))
 	p.publishMessage(msg)
 }
 

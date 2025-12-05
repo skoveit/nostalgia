@@ -38,6 +38,25 @@ var (
 	radarStart   time.Time
 )
 
+// Topology graph data
+type TopoGraph struct {
+	Nodes []TopoNode `json:"nodes"`
+	Edges []TopoEdge `json:"edges"`
+}
+type TopoNode struct {
+	ID string `json:"id"`
+}
+type TopoEdge struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+}
+
+var (
+	topoMu     sync.Mutex
+	topoGraph  = make(map[string][]string) // nodeID -> list of peers
+	topoActive = false
+)
+
 func main() {
 	flag.Parse()
 	logger.SetDebug(*debug)
@@ -68,6 +87,15 @@ func main() {
 				Latency:   latency,
 				Timestamp: time.Now().Unix(),
 			}
+		}
+	})
+
+	// Handle topology responses
+	proto.SetTopoCallback(func(peerID string, peers []string) {
+		topoMu.Lock()
+		defer topoMu.Unlock()
+		if topoActive {
+			topoGraph[peerID] = peers
 		}
 	})
 
@@ -162,6 +190,65 @@ func handleCommand(cmd string, args []string, n *node.Node, proto *protocol.Prot
 
 		// Return JSON results
 		data, _ := json.Marshal(results)
+		return string(data)
+
+	case "topology":
+		// Broadcast topology request and collect peer lists
+		topoMu.Lock()
+		topoGraph = make(map[string][]string)
+		topoActive = true
+		topoMu.Unlock()
+
+		// Add our own peer list
+		myPeers := n.PeerManager().List()
+		myPeerIDs := make([]string, len(myPeers))
+		for i, p := range myPeers {
+			myPeerIDs[i] = p.String()
+		}
+		topoMu.Lock()
+		topoGraph[n.ID().String()] = myPeerIDs
+		topoMu.Unlock()
+
+		// Request topology from all nodes
+		reqID := fmt.Sprintf("topo-%d", time.Now().UnixNano())
+		proto.BroadcastTopology(reqID)
+
+		// Wait for responses
+		time.Sleep(3 * time.Second)
+
+		// Build graph
+		topoMu.Lock()
+		topoActive = false
+
+		nodeSet := make(map[string]bool)
+		edges := []TopoEdge{}
+		edgeSet := make(map[string]bool)
+
+		for nodeID, peers := range topoGraph {
+			nodeSet[nodeID] = true
+			for _, peer := range peers {
+				nodeSet[peer] = true
+				// Create sorted edge key to avoid duplicates
+				edgeKey := nodeID + "-" + peer
+				if peer < nodeID {
+					edgeKey = peer + "-" + nodeID
+				}
+				if !edgeSet[edgeKey] {
+					edgeSet[edgeKey] = true
+					edges = append(edges, TopoEdge{Source: nodeID, Target: peer})
+				}
+			}
+		}
+
+		nodes := make([]TopoNode, 0, len(nodeSet))
+		for nodeID := range nodeSet {
+			nodes = append(nodes, TopoNode{ID: nodeID})
+		}
+
+		graph := TopoGraph{Nodes: nodes, Edges: edges}
+		topoMu.Unlock()
+
+		data, _ := json.Marshal(graph)
 		return string(data)
 
 	case "send":

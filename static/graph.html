@@ -1,0 +1,1104 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Topology | Pro Viewer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            /* Theme: Neon (default) */
+            --primary: #00ff88;
+            --primary-rgb: 0, 255, 136;
+            --secondary: #00ffcc;
+            --accent: #ff00ff;
+            --bg-dark: #0a0a0f;
+            --bg-medium: #1a1a2e;
+            --text: #e0e0e0;
+            --text-muted: #888;
+        }
+
+        .theme-cyberpunk {
+            --primary: #ff0066;
+            --primary-rgb: 255, 0, 102;
+            --secondary: #ff6600;
+            --accent: #00ffff;
+            --bg-dark: #0d0d1a;
+            --bg-medium: #1a0d2e;
+        }
+
+        .theme-ocean {
+            --primary: #00bfff;
+            --primary-rgb: 0, 191, 255;
+            --secondary: #00ff7f;
+            --accent: #ff69b4;
+            --bg-dark: #050a10;
+            --bg-medium: #0a1525;
+        }
+
+        .theme-sunset {
+            --primary: #ff6b35;
+            --primary-rgb: 255, 107, 53;
+            --secondary: #ffd700;
+            --accent: #ff1493;
+            --bg-dark: #1a0a0a;
+            --bg-medium: #2e1a1a;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-medium) 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: var(--text);
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        /* Header */
+        #header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 16px 24px;
+            background: rgba(10, 10, 15, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(var(--primary-rgb), 0.2);
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        #header h1 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: var(--primary);
+            text-shadow: 0 0 20px rgba(var(--primary-rgb), 0.5);
+            letter-spacing: -0.02em;
+        }
+
+        .badge {
+            padding: 4px 10px;
+            background: rgba(var(--primary-rgb), 0.15);
+            border: 1px solid rgba(var(--primary-rgb), 0.3);
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        #controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        #stats {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        #stats span {
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            background: rgba(var(--primary-rgb), 0.1);
+            border: 1px solid rgba(var(--primary-rgb), 0.4);
+            color: var(--primary);
+            font-family: inherit;
+            font-size: 0.8rem;
+            font-weight: 500;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:hover {
+            background: rgba(var(--primary-rgb), 0.2);
+            border-color: rgba(var(--primary-rgb), 0.6);
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-icon {
+            padding: 8px;
+            min-width: 36px;
+            justify-content: center;
+        }
+
+        #autoStatus {
+            font-size: 0.75rem;
+            color: #ff8800;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Settings Panel */
+        #settingsPanel {
+            position: fixed;
+            top: 70px;
+            right: -380px;
+            width: 360px;
+            max-height: calc(100vh - 90px);
+            background: rgba(15, 15, 25, 0.95);
+            backdrop-filter: blur(30px);
+            -webkit-backdrop-filter: blur(30px);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            border-radius: 16px;
+            z-index: 99;
+            transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow-y: auto;
+            box-shadow: -5px 0 40px rgba(0, 0, 0, 0.5);
+        }
+
+        #settingsPanel.open {
+            right: 20px;
+        }
+
+        #settingsPanel::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #settingsPanel::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #settingsPanel::-webkit-scrollbar-thumb {
+            background: rgba(var(--primary-rgb), 0.3);
+            border-radius: 3px;
+        }
+
+        .panel-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid rgba(var(--primary-rgb), 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            background: rgba(15, 15, 25, 0.98);
+            z-index: 1;
+        }
+
+        .panel-header h2 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .panel-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 1.2rem;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+        }
+
+        .panel-close:hover {
+            color: var(--primary);
+        }
+
+        .panel-section {
+            padding: 20px 24px;
+            border-bottom: 1px solid rgba(var(--primary-rgb), 0.08);
+        }
+
+        .panel-section:last-child {
+            border-bottom: none;
+        }
+
+        .section-title {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 16px;
+        }
+
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .control-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .control-label span {
+            font-size: 0.85rem;
+            color: var(--text);
+        }
+
+        .control-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        /* Custom Range Slider */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(var(--primary-rgb), 0.15);
+            outline: none;
+            cursor: pointer;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--primary);
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(var(--primary-rgb), 0.5);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 15px rgba(var(--primary-rgb), 0.7);
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border: none;
+            border-radius: 50%;
+            background: var(--primary);
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(var(--primary-rgb), 0.5);
+        }
+
+        /* Theme Selector */
+        .theme-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .theme-option {
+            padding: 12px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .theme-option:hover {
+            border-color: rgba(255, 255, 255, 0.2);
+            background: rgba(0, 0, 0, 0.4);
+        }
+
+        .theme-option.active {
+            border-color: var(--primary);
+            background: rgba(var(--primary-rgb), 0.1);
+        }
+
+        .theme-preview {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .theme-option span {
+            font-size: 0.8rem;
+            color: var(--text);
+        }
+
+        /* Toggle Switch */
+        .toggle-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: var(--text);
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+
+        .toggle-switch input:checked+.toggle-slider {
+            background-color: var(--primary);
+        }
+
+        .toggle-switch input:checked+.toggle-slider:before {
+            transform: translateX(20px);
+            background-color: var(--bg-dark);
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .quick-actions .btn {
+            flex: 1;
+            justify-content: center;
+            padding: 10px;
+        }
+
+        /* Graph Container */
+        #graph {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        .node {
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .node circle {
+            fill: var(--primary);
+            stroke: var(--primary);
+            stroke-width: 2px;
+            filter: drop-shadow(0 0 8px rgba(var(--primary-rgb), 0.6));
+            transition: all 0.2s;
+        }
+
+        .node:hover circle {
+            fill: var(--secondary);
+            stroke: var(--secondary);
+            filter: drop-shadow(0 0 20px rgba(var(--primary-rgb), 0.9));
+        }
+
+        .node text {
+            fill: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            text-anchor: middle;
+            pointer-events: none;
+            opacity: 0.9;
+            transition: opacity 0.2s;
+        }
+
+        .link {
+            stroke: rgba(var(--primary-rgb), 0.25);
+            stroke-width: 2px;
+            transition: stroke 0.2s, stroke-width 0.2s;
+        }
+
+        .link:hover {
+            stroke: rgba(var(--primary-rgb), 0.5);
+        }
+
+        /* Tooltip */
+        #tooltip {
+            position: absolute;
+            padding: 14px 18px;
+            background: rgba(10, 10, 15, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(var(--primary-rgb), 0.4);
+            border-radius: 12px;
+            font-size: 0.8rem;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s, transform 0.2s;
+            transform: translateY(5px);
+            max-width: 400px;
+            word-break: break-all;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            z-index: 200;
+        }
+
+        #tooltip.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        #tooltip .label {
+            color: var(--text-muted);
+            margin-right: 8px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        #tooltip .value {
+            color: var(--primary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Loading */
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        #loading.visible {
+            display: flex;
+        }
+
+        .loader {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(var(--primary-rgb), 0.1);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        #loading span {
+            font-size: 1rem;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        /* Zoom Controls */
+        #zoomControls {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 50;
+        }
+
+        #zoomControls .btn {
+            padding: 12px;
+            font-size: 1.1rem;
+        }
+
+        /* Mini Map hint */
+        .hint {
+            position: fixed;
+            bottom: 24px;
+            left: 24px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            opacity: 0.6;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .hint kbd {
+            background: rgba(var(--primary-rgb), 0.1);
+            border: 1px solid rgba(var(--primary-rgb), 0.2);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+        }
+
+        /* Animations */
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="header">
+        <div class="header-left">
+            <h1>📡 Network Topology</h1>
+            <span class="badge">Pro</span>
+        </div>
+        <div id="controls">
+            <div id="stats">
+                Nodes: <span id="nodeCount">0</span> |
+                Edges: <span id="edgeCount">0</span>
+            </div>
+            <span id="autoStatus"></span>
+            <button class="btn" id="refreshBtn" onclick="refresh()">
+                <span>🔄</span> Refresh
+            </button>
+            <button class="btn btn-icon" onclick="toggleSettings()" title="Settings">
+                ⚙️
+            </button>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div id="settingsPanel">
+        <div class="panel-header">
+            <h2>⚙️ Graph Settings</h2>
+            <button class="panel-close" onclick="toggleSettings()">✕</button>
+        </div>
+
+        <!-- Theme Section -->
+        <div class="panel-section">
+            <div class="section-title">Theme</div>
+            <div class="theme-grid">
+                <div class="theme-option active" data-theme="neon" onclick="setTheme('neon')">
+                    <div class="theme-preview" style="background: linear-gradient(135deg, #00ff88, #00ffcc);"></div>
+                    <span>Neon</span>
+                </div>
+                <div class="theme-option" data-theme="cyberpunk" onclick="setTheme('cyberpunk')">
+                    <div class="theme-preview" style="background: linear-gradient(135deg, #ff0066, #ff6600);"></div>
+                    <span>Cyberpunk</span>
+                </div>
+                <div class="theme-option" data-theme="ocean" onclick="setTheme('ocean')">
+                    <div class="theme-preview" style="background: linear-gradient(135deg, #00bfff, #00ff7f);"></div>
+                    <span>Ocean</span>
+                </div>
+                <div class="theme-option" data-theme="sunset" onclick="setTheme('sunset')">
+                    <div class="theme-preview" style="background: linear-gradient(135deg, #ff6b35, #ffd700);"></div>
+                    <span>Sunset</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Node Settings -->
+        <div class="panel-section">
+            <div class="section-title">Node Settings</div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Node Size</span>
+                    <span class="control-value" id="nodeSizeValue">12</span>
+                </div>
+                <input type="range" id="nodeSize" min="4" max="40" value="12" oninput="updateSettings()">
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Label Size</span>
+                    <span class="control-value" id="labelSizeValue">10</span>
+                </div>
+                <input type="range" id="labelSize" min="6" max="20" value="10" oninput="updateSettings()">
+            </div>
+
+            <div class="control-group toggle-container">
+                <span style="font-size: 0.85rem;">Show Labels</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="showLabels" checked onchange="updateSettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="control-group toggle-container">
+                <span style="font-size: 0.85rem;">Full Node ID</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="fullNodeId" onchange="updateSettings()">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Force Settings -->
+        <div class="panel-section">
+            <div class="section-title">Physics</div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Link Distance</span>
+                    <span class="control-value" id="linkDistanceValue">150</span>
+                </div>
+                <input type="range" id="linkDistance" min="50" max="500" value="150" oninput="updateSettings()">
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Repulsion Force</span>
+                    <span class="control-value" id="chargeStrengthValue">-400</span>
+                </div>
+                <input type="range" id="chargeStrength" min="-1500" max="-50" value="-400" oninput="updateSettings()">
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Collision Radius</span>
+                    <span class="control-value" id="collisionRadiusValue">50</span>
+                </div>
+                <input type="range" id="collisionRadius" min="10" max="150" value="50" oninput="updateSettings()">
+            </div>
+        </div>
+
+        <!-- Link Settings -->
+        <div class="panel-section">
+            <div class="section-title">Link Settings</div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Link Width</span>
+                    <span class="control-value" id="linkWidthValue">2</span>
+                </div>
+                <input type="range" id="linkWidth" min="0.5" max="8" step="0.5" value="2" oninput="updateSettings()">
+            </div>
+
+            <div class="control-group">
+                <div class="control-label">
+                    <span>Link Opacity</span>
+                    <span class="control-value" id="linkOpacityValue">0.25</span>
+                </div>
+                <input type="range" id="linkOpacity" min="0.05" max="1" step="0.05" value="0.25"
+                    oninput="updateSettings()">
+            </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="panel-section">
+            <div class="section-title">Quick Actions</div>
+            <div class="quick-actions">
+                <button class="btn" onclick="fitToView()">📐 Fit View</button>
+                <button class="btn" onclick="resetSettings()">↺ Reset</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="tooltip"></div>
+    <div id="loading" class="visible">
+        <div class="loader"></div>
+        <span>Loading topology...</span>
+    </div>
+    <svg id="graph"></svg>
+
+    <!-- Zoom Controls -->
+    <div id="zoomControls">
+        <button class="btn btn-icon" onclick="zoomIn()" title="Zoom In">+</button>
+        <button class="btn btn-icon" onclick="zoomOut()" title="Zoom Out">−</button>
+        <button class="btn btn-icon" onclick="fitToView()" title="Fit to View">⊡</button>
+    </div>
+
+    <div class="hint">
+        <kbd>Scroll</kbd> to zoom • Drag nodes to reposition
+    </div>
+
+    <script>
+        // State
+        let graphData = null;
+        let simulation = null;
+        let currentZoom = d3.zoomIdentity;
+        let linkElements = null;
+        let nodeElements = null;
+
+        // Settings with defaults
+        const settings = {
+            nodeSize: 12,
+            labelSize: 10,
+            showLabels: true,
+            fullNodeId: false,
+            linkDistance: 150,
+            chargeStrength: -400,
+            collisionRadius: 50,
+            linkWidth: 2,
+            linkOpacity: 0.25
+        };
+
+        // Setup
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const svg = d3.select("#graph").attr("width", width).attr("height", height);
+        const g = svg.append("g");
+
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 8])
+            .on("zoom", (e) => {
+                currentZoom = e.transform;
+                g.attr("transform", e.transform);
+            });
+
+        svg.call(zoom);
+        const tooltip = d3.select("#tooltip");
+
+        // Auto-refresh from URL param
+        const interval = parseInt(new URLSearchParams(location.search).get("interval")) || 0;
+        if (interval > 0) {
+            document.getElementById("autoStatus").textContent = `Auto: ${interval}s`;
+            setInterval(refresh, interval * 1000);
+        }
+
+        // Load saved settings
+        loadSettings();
+        refresh();
+
+        function toggleSettings() {
+            document.getElementById("settingsPanel").classList.toggle("open");
+        }
+
+        function setTheme(theme) {
+            document.body.className = theme === 'neon' ? '' : `theme-${theme}`;
+            document.querySelectorAll('.theme-option').forEach(el => {
+                el.classList.toggle('active', el.dataset.theme === theme);
+            });
+            localStorage.setItem('graphTheme', theme);
+            // Re-render to apply new colors
+            if (graphData) renderGraph(graphData);
+        }
+
+        function loadSettings() {
+            const saved = localStorage.getItem('graphSettings');
+            if (saved) {
+                Object.assign(settings, JSON.parse(saved));
+                // Update UI controls
+                document.getElementById('nodeSize').value = settings.nodeSize;
+                document.getElementById('labelSize').value = settings.labelSize;
+                document.getElementById('showLabels').checked = settings.showLabels;
+                document.getElementById('fullNodeId').checked = settings.fullNodeId;
+                document.getElementById('linkDistance').value = settings.linkDistance;
+                document.getElementById('chargeStrength').value = settings.chargeStrength;
+                document.getElementById('collisionRadius').value = settings.collisionRadius;
+                document.getElementById('linkWidth').value = settings.linkWidth;
+                document.getElementById('linkOpacity').value = settings.linkOpacity;
+                updateValueDisplays();
+            }
+
+            const theme = localStorage.getItem('graphTheme') || 'neon';
+            setTheme(theme);
+        }
+
+        function saveSettings() {
+            localStorage.setItem('graphSettings', JSON.stringify(settings));
+        }
+
+        function updateValueDisplays() {
+            document.getElementById('nodeSizeValue').textContent = settings.nodeSize;
+            document.getElementById('labelSizeValue').textContent = settings.labelSize;
+            document.getElementById('linkDistanceValue').textContent = settings.linkDistance;
+            document.getElementById('chargeStrengthValue').textContent = settings.chargeStrength;
+            document.getElementById('collisionRadiusValue').textContent = settings.collisionRadius;
+            document.getElementById('linkWidthValue').textContent = settings.linkWidth;
+            document.getElementById('linkOpacityValue').textContent = settings.linkOpacity;
+        }
+
+        function updateSettings() {
+            settings.nodeSize = parseInt(document.getElementById('nodeSize').value);
+            settings.labelSize = parseInt(document.getElementById('labelSize').value);
+            settings.showLabels = document.getElementById('showLabels').checked;
+            settings.fullNodeId = document.getElementById('fullNodeId').checked;
+            settings.linkDistance = parseInt(document.getElementById('linkDistance').value);
+            settings.chargeStrength = parseInt(document.getElementById('chargeStrength').value);
+            settings.collisionRadius = parseInt(document.getElementById('collisionRadius').value);
+            settings.linkWidth = parseFloat(document.getElementById('linkWidth').value);
+            settings.linkOpacity = parseFloat(document.getElementById('linkOpacity').value);
+
+            updateValueDisplays();
+            saveSettings();
+            applySettings();
+        }
+
+        function applySettings() {
+            if (!simulation || !graphData) return;
+
+            // Update simulation forces
+            simulation
+                .force("link").distance(settings.linkDistance);
+            simulation
+                .force("charge").strength(settings.chargeStrength);
+            simulation
+                .force("collision").radius(settings.collisionRadius);
+
+            simulation.alpha(0.3).restart();
+
+            // Update visual elements
+            if (nodeElements) {
+                nodeElements.select("circle")
+                    .attr("r", settings.nodeSize);
+
+                nodeElements.select("text")
+                    .style("font-size", settings.labelSize + "px")
+                    .attr("dy", settings.nodeSize + 15)
+                    .style("opacity", settings.showLabels ? 0.9 : 0)
+                    .text(d => settings.fullNodeId ? d.id : d.id.substring(0, 8) + "...");
+            }
+
+            if (linkElements) {
+                linkElements
+                    .attr("stroke-width", settings.linkWidth + "px")
+                    .attr("stroke-opacity", settings.linkOpacity);
+            }
+        }
+
+        function resetSettings() {
+            settings.nodeSize = 12;
+            settings.labelSize = 10;
+            settings.showLabels = true;
+            settings.fullNodeId = false;
+            settings.linkDistance = 150;
+            settings.chargeStrength = -400;
+            settings.collisionRadius = 50;
+            settings.linkWidth = 2;
+            settings.linkOpacity = 0.25;
+
+            document.getElementById('nodeSize').value = settings.nodeSize;
+            document.getElementById('labelSize').value = settings.labelSize;
+            document.getElementById('showLabels').checked = settings.showLabels;
+            document.getElementById('fullNodeId').checked = settings.fullNodeId;
+            document.getElementById('linkDistance').value = settings.linkDistance;
+            document.getElementById('chargeStrength').value = settings.chargeStrength;
+            document.getElementById('collisionRadius').value = settings.collisionRadius;
+            document.getElementById('linkWidth').value = settings.linkWidth;
+            document.getElementById('linkOpacity').value = settings.linkOpacity;
+
+            updateValueDisplays();
+            saveSettings();
+            applySettings();
+        }
+
+        function zoomIn() {
+            svg.transition().duration(300).call(zoom.scaleBy, 1.5);
+        }
+
+        function zoomOut() {
+            svg.transition().duration(300).call(zoom.scaleBy, 0.67);
+        }
+
+        function fitToView() {
+            if (!graphData || !graphData.nodes.length) return;
+
+            const bounds = g.node().getBBox();
+            const padding = 80;
+            const fullWidth = bounds.width + padding * 2;
+            const fullHeight = bounds.height + padding * 2;
+            const midX = bounds.x + bounds.width / 2;
+            const midY = bounds.y + bounds.height / 2;
+
+            const scale = Math.min(width / fullWidth, height / fullHeight, 2);
+            const translateX = width / 2 - midX * scale;
+            const translateY = height / 2 - midY * scale;
+
+            svg.transition()
+                .duration(500)
+                .call(zoom.transform, d3.zoomIdentity.translate(translateX, translateY).scale(scale));
+        }
+
+        function refresh() {
+            const btn = document.getElementById("refreshBtn");
+            btn.disabled = true;
+            btn.innerHTML = "<span class='pulse'>⏳</span> Loading...";
+
+            fetch("/api/topology")
+                .then(r => r.json())
+                .then(data => {
+                    graphData = data;
+                    document.getElementById("loading").classList.remove("visible");
+                    document.getElementById("nodeCount").textContent = data.nodes.length;
+                    document.getElementById("edgeCount").textContent = data.edges.length;
+                    renderGraph(data);
+                    btn.disabled = false;
+                    btn.innerHTML = "<span>🔄</span> Refresh";
+                })
+                .catch(() => {
+                    btn.innerHTML = "<span>❌</span> Error";
+                    setTimeout(() => {
+                        btn.disabled = false;
+                        btn.innerHTML = "<span>🔄</span> Refresh";
+                    }, 2000);
+                });
+        }
+
+        function renderGraph(data) {
+            g.selectAll("*").remove();
+            if (simulation) simulation.stop();
+
+            simulation = d3.forceSimulation(data.nodes)
+                .force("link", d3.forceLink(data.edges).id(d => d.id).distance(settings.linkDistance))
+                .force("charge", d3.forceManyBody().strength(settings.chargeStrength))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(settings.collisionRadius));
+
+            // Create links
+            linkElements = g.append("g")
+                .attr("class", "links")
+                .selectAll("line")
+                .data(data.edges)
+                .join("line")
+                .attr("class", "link")
+                .attr("stroke-width", settings.linkWidth + "px")
+                .attr("stroke-opacity", settings.linkOpacity);
+
+            // Create nodes
+            nodeElements = g.append("g")
+                .attr("class", "nodes")
+                .selectAll("g")
+                .data(data.nodes)
+                .join("g")
+                .attr("class", "node")
+                .call(d3.drag()
+                    .on("start", (e, d) => {
+                        if (!e.active) simulation.alphaTarget(0.3).restart();
+                        d.fx = d.x;
+                        d.fy = d.y;
+                    })
+                    .on("drag", (e, d) => {
+                        d.fx = e.x;
+                        d.fy = e.y;
+                    })
+                    .on("end", (e, d) => {
+                        if (!e.active) simulation.alphaTarget(0);
+                        d.fx = null;
+                        d.fy = null;
+                    }));
+
+            nodeElements.append("circle")
+                .attr("r", settings.nodeSize);
+
+            nodeElements.append("text")
+                .attr("dy", settings.nodeSize + 15)
+                .style("font-size", settings.labelSize + "px")
+                .style("opacity", settings.showLabels ? 0.9 : 0)
+                .text(d => settings.fullNodeId ? d.id : d.id.substring(0, 8) + "...");
+
+            nodeElements
+                .on("mouseover", (e, d) => {
+                    tooltip.classed("visible", true)
+                        .html(`<span class="label">Node ID:</span><span class="value">${d.id}</span>`)
+                        .style("left", (e.pageX + 15) + "px")
+                        .style("top", (e.pageY - 10) + "px");
+                })
+                .on("mouseout", () => tooltip.classed("visible", false))
+                .on("mousemove", (e) => {
+                    tooltip
+                        .style("left", (e.pageX + 15) + "px")
+                        .style("top", (e.pageY - 10) + "px");
+                });
+
+            simulation.on("tick", () => {
+                linkElements
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+                nodeElements.attr("transform", d => `translate(${d.x},${d.y})`);
+            });
+
+            // Auto fit after initial layout
+            setTimeout(fitToView, 500);
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 's' && !e.ctrlKey && !e.metaKey) {
+                toggleSettings();
+            } else if (e.key === 'f') {
+                fitToView();
+            } else if (e.key === 'r') {
+                refresh();
+            } else if (e.key === '+' || e.key === '=') {
+                zoomIn();
+            } else if (e.key === '-') {
+                zoomOut();
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            const newWidth = window.innerWidth;
+            const newHeight = window.innerHeight;
+            svg.attr("width", newWidth).attr("height", newHeight);
+            if (simulation) {
+                simulation.force("center", d3.forceCenter(newWidth / 2, newHeight / 2));
+                simulation.alpha(0.3).restart();
+            }
+        });
+    </script>
+</body>
+
+</html>

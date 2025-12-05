@@ -13,8 +13,10 @@ const (
 	MsgTypeCommand  MessageType = "command"
 	MsgTypeResponse MessageType = "response"
 	MsgTypeRoute    MessageType = "route"
-	MsgTypePing     MessageType = "ping" // Radar discovery ping
-	MsgTypePong     MessageType = "pong" // Radar discovery response
+	MsgTypePing     MessageType = "ping"    // Radar discovery ping
+	MsgTypePong     MessageType = "pong"    // Radar discovery response
+	MsgTypeTopoReq  MessageType = "toporeq" // Topology request
+	MsgTypeTopoRes  MessageType = "topores" // Topology response (peer list)
 )
 
 // String returns the human-readable string representation of the message type

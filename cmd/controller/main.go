@@ -3,14 +3,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"nostaliga/pkg/ipc"
-
+	"nostaliga/static"
 	"github.com/peterh/liner"
 )
 
@@ -20,9 +24,10 @@ var (
 	peerList     []string
 	peerCount    int
 	mu           sync.RWMutex
+	graphServer  net.Listener // graph web server
 )
 
-var commands = []string{"use", "run", "back", "send", "peers", "radar", "clear", "cls", "id", "help", "quit", "exit"}
+var commands = []string{"use", "run", "back", "send", "peers", "radar", "graph", "clear", "cls", "id", "help", "quit", "exit"}
 
 func main() {
 	var err error
@@ -201,6 +206,20 @@ func execute(input string) {
 		resp, _ := client.Send("id")
 		fmt.Println(resp)
 
+	case "graph":
+		if len(args) == 0 {
+			fmt.Println("Usage: graph on | graph off")
+			return
+		}
+		switch args[0] {
+		case "on":
+			graphOn()
+		case "off":
+			graphOff()
+		default:
+			fmt.Println("Usage: graph on | graph off")
+		}
+
 	case "quit", "exit":
 		client.Send("quit")
 		fmt.Println("Goodbye!")
@@ -305,6 +324,69 @@ func printRadarResults(results []RadarResult) {
 	fmt.Println()
 }
 
+func graphOn() {
+	if graphServer != nil {
+		fmt.Println("Graph server already running")
+		return
+	}
+
+	// Find available port
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		fmt.Println("Failed to start server:", err)
+		return
+	}
+	graphServer = listener
+	port := listener.Addr().(*net.TCPAddr).Port
+	url := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	// Setup HTTP handlers
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write(static.GraphHTML)
+	})
+	mux.HandleFunc("/api/topology", func(w http.ResponseWriter, r *http.Request) {
+		data, err := client.Send("topology")
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(data))
+	})
+
+	// Start server in background
+	go http.Serve(listener, mux)
+
+	fmt.Printf("📡 Graph server: %s\n", url)
+	fmt.Println("Use /?interval=5 for auto-refresh every 5s")
+	openBrowser(url)
+}
+
+func graphOff() {
+	if graphServer == nil {
+		fmt.Println("Graph server not running")
+		return
+	}
+	graphServer.Close()
+	graphServer = nil
+	fmt.Println("Graph server stopped")
+}
+
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	cmd.Start()
+}
+
 func selectPeer() {
 	mu.RLock()
 	peers := peerList
@@ -373,6 +455,8 @@ Commands:
   send <id> <cmd>  Send command to specific peer
   peers            List connected peers
   radar            Scan entire network for all nodes
+  graph on         Start topology web viewer
+  graph off        Stop topology web viewer
   clear, cls       Clear terminal screen
   id               Show node ID
   help             Show this help
