@@ -15,6 +15,7 @@ import (
 
 	"nostaliga/pkg/ipc"
 	"nostaliga/static"
+
 	"github.com/peterh/liner"
 )
 
@@ -27,7 +28,7 @@ var (
 	graphServer  net.Listener // graph web server
 )
 
-var commands = []string{"use", "run", "back", "send", "peers", "radar", "graph", "clear", "cls", "id", "help", "quit", "exit"}
+var commands = []string{"sign", "use", "run", "back", "send", "peers", "radar", "graph", "clear", "cls", "id", "help", "quit", "exit"}
 
 func main() {
 	var err error
@@ -219,6 +220,9 @@ func execute(input string) {
 		default:
 			fmt.Println("Usage: graph on | graph off")
 		}
+
+	case "sign":
+		handleSign(args)
 
 	case "quit", "exit":
 		client.Send("quit")
@@ -446,19 +450,57 @@ func handleEvents() {
 	}
 }
 
+func handleSign(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: sign <private_key> OR sign -path <file_path>")
+		return
+	}
+
+	var privateKey string
+
+	if args[0] == "-path" {
+		if len(args) < 2 {
+			fmt.Println("Usage: sign -path <file_path>")
+			return
+		}
+		data, err := os.ReadFile(args[1])
+		if err != nil {
+			fmt.Printf("Failed to read key file: %v\n", err)
+			return
+		}
+		privateKey = strings.TrimSpace(string(data))
+	} else {
+		privateKey = args[0]
+	}
+
+	resp, err := client.Send("sign", privateKey)
+	if err != nil {
+		fmt.Printf("Failed to sign: %v\n", err)
+		return
+	}
+
+	if resp == "signed" {
+		fmt.Println("✅ Signed in as operator")
+	} else {
+		fmt.Println(resp)
+	}
+}
+
 func printHelp() {
 	fmt.Println(`
 Commands:
-  use [peerID]     Select target peer (TAB completes peer ID)
-  run <command>    Execute command on selected peer
-  back             Deselect peer
-  send <id> <cmd>  Send command to specific peer
-  peers            List connected peers
-  radar            Scan entire network for all nodes
-  graph on         Start topology web viewer
-  graph off        Stop topology web viewer
-  clear, cls       Clear terminal screen
-  id               Show node ID
-  help             Show this help
-  quit             Exit`)
+  sign <key>         Sign in with operator private key
+  sign -path <file>  Sign in with key from file
+  use [peerID]       Select target peer (TAB completes peer ID)
+  run <command>      Execute command on selected peer
+  back               Deselect peer
+  send <id> <cmd>    Send command to specific peer
+  peers              List connected peers
+  radar              Scan entire network for all nodes
+  graph on           Start topology web viewer
+  graph off          Stop topology web viewer
+  clear, cls         Clear terminal screen
+  id                 Show node ID
+  help               Show this help
+  quit               Exit`)
 }

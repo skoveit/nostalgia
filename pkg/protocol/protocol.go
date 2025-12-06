@@ -37,6 +37,7 @@ type Protocol struct {
 	responseCallback ResponseCallback
 	pongCallback     PongCallback
 	topoCallback     TopoCallback
+	privateKey       string // Operator's private key for signing commands
 	callbackMu       sync.RWMutex
 }
 
@@ -137,6 +138,15 @@ func (p *Protocol) handlePubSubMessage(data []byte) {
 
 	// Check if message is for this node
 	if msg.Target == p.node.ID().String() {
+		// Verify signature for command messages
+		if msg.Type == MsgTypeCommand {
+			if !msg.VerifySignature() {
+				logger.Debug("🚫 Rejected unsigned/invalid command from %s", msg.Source)
+				return
+			}
+			logger.Debug("✅ Signature verified for command from %s", msg.Source)
+		}
+
 		logger.Debug("📩 [GossipSub] Received %s", msg.Type.String())
 		if err := p.handler.Handle(msg); err != nil {
 			logger.Debug("Error handling command: %v", err)
@@ -177,6 +187,21 @@ func (p *Protocol) SetTopoCallback(cb TopoCallback) {
 	p.callbackMu.Lock()
 	defer p.callbackMu.Unlock()
 	p.topoCallback = cb
+}
+
+// SetPrivateKey sets the operator's private key for signing commands.
+// The key should be a base64-encoded Ed25519 private key.
+func (p *Protocol) SetPrivateKey(key string) {
+	p.callbackMu.Lock()
+	defer p.callbackMu.Unlock()
+	p.privateKey = key
+}
+
+// HasPrivateKey returns true if a private key has been set.
+func (p *Protocol) HasPrivateKey() bool {
+	p.callbackMu.RLock()
+	defer p.callbackMu.RUnlock()
+	return p.privateKey != ""
 }
 
 // BroadcastTopology sends a topology request to all nodes
@@ -222,6 +247,15 @@ func (p *Protocol) HandleStream(s network.Stream) {
 
 	// Check if message is for this node
 	if msg.Target == p.node.ID().String() {
+		// Verify signature for command messages
+		if msg.Type == MsgTypeCommand {
+			if !msg.VerifySignature() {
+				logger.Debug("🚫 Rejected unsigned/invalid command from %s", msg.Source)
+				return
+			}
+			logger.Debug("✅ Signature verified for command from %s", msg.Source)
+		}
+
 		logger.Debug("📩 [Direct] Received %s", msg.Type.String())
 		if err := p.handler.Handle(msg); err != nil {
 			logger.Debug("Error handling command: %v", err)
@@ -237,6 +271,24 @@ func (p *Protocol) HandleStream(s network.Stream) {
 
 func (p *Protocol) Send(msgType MessageType, targetID, payload string) {
 	msg := NewMessage(msgType, p.node.ID().String(), targetID, payload)
+
+	// Sign command messages
+	if msgType == MsgTypeCommand {
+		p.callbackMu.RLock()
+		privKey := p.privateKey
+		p.callbackMu.RUnlock()
+
+		if privKey == "" {
+			logger.Debug("❌ Cannot send command: not signed in (use 'sign' command)")
+			return
+		}
+
+		if err := msg.SignWithKey(privKey); err != nil {
+			logger.Debug("❌ Failed to sign command: %v", err)
+			return
+		}
+		logger.Debug("✍️ Signed command to %s", targetID)
+	}
 
 	// Try direct connection first if peer is known
 	target, err := peer.Decode(targetID)

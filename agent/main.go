@@ -251,9 +251,19 @@ func handleCommand(cmd string, args []string, n *node.Node, proto *protocol.Prot
 		data, _ := json.Marshal(graph)
 		return string(data)
 
+	case "sign":
+		if len(args) < 1 {
+			return "usage: sign <private_key_base64>"
+		}
+		proto.SetPrivateKey(args[0])
+		return "signed"
+
 	case "send":
 		if len(args) < 2 {
 			return "usage: send <nodeID> <command>"
+		}
+		if !proto.HasPrivateKey() {
+			return "error: not signed in. Use 'sign <private_key>' first"
 		}
 		proto.SendCommand(args[0], strings.Join(args[1:], " "))
 		return ""

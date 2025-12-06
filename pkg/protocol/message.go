@@ -2,7 +2,10 @@ package protocol
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
+
+	"nostaliga/pkg/signing"
 
 	"github.com/libp2p/go-libp2p/core/peer"
 )
@@ -33,6 +36,7 @@ type Message struct {
 	Timestamp int64       `json:"timestamp"`
 	TTL       int         `json:"ttl"`
 	Visited   []string    `json:"visited"`
+	Signature string      `json:"signature,omitempty"`
 }
 
 func NewMessage(msgType MessageType, source, target, payload string) *Message {
@@ -71,6 +75,39 @@ func UnmarshalMessage(data []byte) (*Message, error) {
 	var msg Message
 	err := json.Unmarshal(data, &msg)
 	return &msg, err
+}
+
+// SignableContent returns the bytes to be signed.
+// This excludes Visited and Signature fields to ensure signature remains valid
+// as the message is routed through the network.
+func (m *Message) SignableContent() []byte {
+	// Create deterministic content: type|source|target|payload|timestamp
+	content := string(m.Type) + "|" + m.Source + "|" + m.Target + "|" + m.Payload + "|" + fmt.Sprintf("%d", m.Timestamp)
+	return []byte(content)
+}
+
+// SignWithKey signs the message with the given private key.
+// The privateKeyB64 should be a base64-encoded Ed25519 private key.
+func (m *Message) SignWithKey(privateKeyB64 string) error {
+	sig, err := signing.SignWithKey(m.SignableContent(), privateKeyB64)
+	if err != nil {
+		return err
+	}
+	m.Signature = sig
+	return nil
+}
+
+// VerifySignature verifies the message signature.
+func (m *Message) VerifySignature() bool {
+	if m.Signature == "" {
+		return false
+	}
+	return signing.Verify(m.SignableContent(), m.Signature)
+}
+
+// IsSigned returns true if the message has a signature.
+func (m *Message) IsSigned() bool {
+	return m.Signature != ""
 }
 
 func generateID() string {
